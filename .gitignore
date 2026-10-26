@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+build/
+dist/
+*.egg-info/
+bpr02_results.csv
+.env
+bpr02_events.jsonl
+bpr02_manual_reviews.jsonl
+bpr02_data_audit.json
+bpr02_sensitivity.csv
+bpr02_fold_metrics.csv
+events.jsonl
+reviews.jsonl

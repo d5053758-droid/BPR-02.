@@ -93,6 +93,7 @@ class SignalBridge:
         self.source = source
         self._candles: deque[dict[str, object]] = deque(maxlen=lookback + 1)
         self._last_timestamp: pd.Timestamp | None = None
+        self._stream_identity: dict[str, str] | None = None
         if history is not None:
             required = {"timestamp", "open", "high", "low", "close"}
             if not required.issubset(history.columns):
@@ -109,10 +110,37 @@ class SignalBridge:
                 validated = _validate_candle(payload)
                 self._candles.append(validated)
                 self._last_timestamp = pd.Timestamp(validated["timestamp"])
+            # A CSV history has no guaranteed instrument metadata. The caller's
+            # configured labels define the identity for that warm-up history.
+            self._stream_identity = {
+                "symbol": self.symbol,
+                "timeframe": self.timeframe,
+                "source": self.source,
+            }
 
     def process(self, payload: object) -> dict[str, object] | None:
         """Return an event for a new closed candle; reject duplicate/out-of-order bars."""
         candle = _validate_candle(payload)
+
+        identity_fields = ("symbol", "timeframe", "source")
+        if self._stream_identity is None:
+            self._stream_identity = {
+                field: str(candle.get(field, getattr(self, field)))
+                for field in identity_fields
+            }
+        else:
+            for field in identity_fields:
+                observed = str(candle.get(field, self._stream_identity[field]))
+                expected = self._stream_identity[field]
+                if observed != expected:
+                    raise ValueError(
+                        f"{field} changed within one stream "
+                        f"({expected!r} -> {observed!r}); start a new bridge for a different feed"
+                    )
+        # Persist the resolved identity so omitted optional fields cannot make
+        # event metadata drift back to constructor defaults halfway through.
+        candle.update(self._stream_identity)
+
         timestamp = pd.Timestamp(candle["timestamp"])
         if self._last_timestamp is not None:
             if timestamp == self._last_timestamp:

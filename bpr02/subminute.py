@@ -19,6 +19,7 @@ import pandas as pd
 
 from .data import load_ohlc_csv
 from .provenance import build_run_manifest, write_run_manifest
+from .quote_quality import assess_quote_temporal_resolution
 from .signals import CALL, NO_TRADE, PUT, sweep_reclaim_signals
 from .backtest import summarize_results
 
@@ -268,6 +269,13 @@ def backtest_seconds_expiry(
     quote_gap_max_seconds = (
         float(quote_intervals.max()) if not quote_intervals.empty else None
     )
+    resolution_screen = assess_quote_temporal_resolution(
+        observations=len(quote_frame),
+        span_seconds=quote_span_seconds,
+        p95_gap_seconds=quote_gap_p95_seconds,
+        expiry_seconds=expiry,
+        target_resolution_fraction=0.25,
+    )
     total_signals = int(signal_series.isin([CALL, PUT]).sum())
     counters = {
         "no_entry_quote": 0,
@@ -369,6 +377,10 @@ def backtest_seconds_expiry(
         "quote_gap_median_seconds": quote_gap_median_seconds,
         "quote_gap_p95_seconds": quote_gap_p95_seconds,
         "quote_gap_max_seconds": quote_gap_max_seconds,
+        "quote_temporal_resolution_assessment": resolution_screen["temporal_resolution_assessment"],
+        "quote_target_p95_gap_seconds": resolution_screen["target_p95_gap_seconds"],
+        "quote_resolution_fraction_of_expiry": resolution_screen["target_resolution_fraction_of_expiry"],
+        "quote_resolution_assessment_is_heuristic": resolution_screen["assessment_is_heuristic"],
         **counters,
         "bar_seconds": bars_seconds,
         "bar_timestamp_label": bar_timestamp_label,
@@ -494,6 +506,18 @@ def run_seconds_walk_forward(
                 "quote_gap_median_seconds": None,
                 "quote_gap_p95_seconds": None,
                 "quote_gap_max_seconds": None,
+                **{
+                    "quote_temporal_resolution_assessment": assess_quote_temporal_resolution(
+                        observations=0,
+                        span_seconds=0.0,
+                        p95_gap_seconds=None,
+                        expiry_seconds=expiry,
+                        target_resolution_fraction=0.25,
+                    )["temporal_resolution_assessment"],
+                    "quote_target_p95_gap_seconds": expiry * 0.25,
+                    "quote_resolution_fraction_of_expiry": 0.25,
+                    "quote_resolution_assessment_is_heuristic": True,
+                },
                 "no_entry_quote": candidate_count,
                 "stale_entry_quote": 0,
                 "no_settlement_quote": 0,
@@ -555,6 +579,15 @@ def run_seconds_walk_forward(
         if len(quote_times) >= 2
         else 0.0
     )
+    aggregate_resolution_screen = assess_quote_temporal_resolution(
+        observations=len(quote_frame),
+        span_seconds=quote_span,
+        p95_gap_seconds=(
+            float(global_intervals.quantile(0.95)) if not global_intervals.empty else None
+        ),
+        expiry_seconds=expiry,
+        target_resolution_fraction=0.25,
+    )
     aggregate_diagnostics: dict[str, int | float | str | None] = {
         "signal_candles": int(fold_metrics["test_rows"].sum()),
         "candidate_signals": total_candidates,
@@ -568,6 +601,10 @@ def run_seconds_walk_forward(
         "quote_gap_median_seconds": float(global_intervals.median()) if not global_intervals.empty else None,
         "quote_gap_p95_seconds": float(global_intervals.quantile(0.95)) if not global_intervals.empty else None,
         "quote_gap_max_seconds": float(global_intervals.max()) if not global_intervals.empty else None,
+        "quote_temporal_resolution_assessment": aggregate_resolution_screen["temporal_resolution_assessment"],
+        "quote_target_p95_gap_seconds": aggregate_resolution_screen["target_p95_gap_seconds"],
+        "quote_resolution_fraction_of_expiry": aggregate_resolution_screen["target_resolution_fraction_of_expiry"],
+        "quote_resolution_assessment_is_heuristic": aggregate_resolution_screen["assessment_is_heuristic"],
         **aggregate_counters,
         "bar_seconds": bars_seconds,
         "bar_timestamp_label": bar_timestamp_label,

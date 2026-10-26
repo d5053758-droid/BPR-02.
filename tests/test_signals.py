@@ -21,3 +21,25 @@ def test_invalid_lookback_rejected():
     frame = pd.DataFrame({"open": [1], "high": [2], "low": [0], "close": [1]})
     with pytest.raises(ValueError):
         sweep_reclaim_signals(frame, lookback=1)
+
+
+def test_explicit_expected_interval_detects_systematically_missing_bars():
+    timestamps = pd.to_datetime([
+        "2025-01-01T00:00:00Z",
+        "2025-01-01T00:02:00Z",
+        "2025-01-01T00:04:00Z",
+        "2025-01-01T00:06:00Z",
+    ])
+    frame = pd.DataFrame({
+        "timestamp": timestamps,
+        "open": [10.0, 10.0, 10.0, 9.5],
+        "high": [11.0, 11.0, 11.0, 10.5],
+        "low": [9.0, 9.0, 9.0, 8.0],
+        "close": [10.0, 10.0, 10.0, 10.0],
+    })
+    inferred = sweep_reclaim_signals(frame, lookback=3)
+    explicit = sweep_reclaim_signals(
+        frame, lookback=3, expected_interval_seconds=60
+    )
+    assert inferred["signal"].iloc[3] == CALL
+    assert explicit["signal"].iloc[3] == NO_TRADE

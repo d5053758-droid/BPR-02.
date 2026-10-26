@@ -57,6 +57,14 @@ To compare lookback and expiry combinations across earlier training data and a l
 python -m bpr02 path/to/candles.csv --sensitivity --lookbacks 6,12,18 --expiry-grid 1,2,3 --train-fraction 0.70 --sensitivity-output sensitivity.csv
 ```
 
+To inspect the CSV before strategy testing and report missing-interval estimates:
+
+```bash
+python -m bpr02 path/to/candles.csv --audit-data --expected-interval-seconds 60 --audit-output data_audit.json
+```
+
+When no expected interval is supplied, BPR-02 infers the most common positive observed interval (shorter interval wins a tie). Large gaps are estimates, not automatic proof of missing data; sessions and feed behavior can also create gaps. The audit is based on the normalized candle table, so malformed/duplicate input rows are already rejected by CSV loading.
+
 This writes one row per lookback/expiry combination and segment (train/test). The grid is a diagnostic, not an automatic optimizer: repeated choices based on the holdout set can overfit it.
 
 The walk-forward mode requires both `--initial-train-size` and `--test-size`. Training windows expand chronologically; test windows stay in the future and do not overlap by default. Choose window sizes based on the dataset, and do not repeatedly tune the rule against the final evaluation window.
@@ -91,5 +99,6 @@ Use `chronological_split(frame, train_fraction=0.70)` to reserve the later porti
 - `bpr02/evaluation.py`: chronological train/test and expanding walk-forward splits.
 - `bpr02/walkforward.py`: per-fold fixed-expiry simulations and fold metrics.
 - `bpr02/sensitivity.py`: chronological train/test sensitivity grid for lookback and expiry.
+- `bpr02/audit.py`: timestamp-interval, gap and OHLC diagnostics.
 - `bpr02/cli.py`: command-line interface.
 - `tests/`: regression tests.

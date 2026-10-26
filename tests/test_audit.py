@@ -30,6 +30,7 @@ def test_audit_detects_a_three_minute_gap_as_two_estimated_missing_bars():
 
 def test_audit_flags_invalid_ohlc_duplicate_and_bad_timestamp():
     data = frame()
+    data["timestamp"] = data["timestamp"].astype("object")
     data.loc[1, "high"] = 0.5
     data.loc[2, "timestamp"] = data.loc[0, "timestamp"]
     data.loc[3, "timestamp"] = "not-a-timestamp"

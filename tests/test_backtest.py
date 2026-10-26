@@ -37,6 +37,9 @@ def test_put_loss_and_tie_push():
     assert stats["losses"] == 1
     assert stats["ties"] == 1
     assert stats["net_pnl_in_stake_units"] == -1.0
+    assert stats["break_even_win_rate_excluding_ties"] == pytest.approx(1 / 1.8)
+    assert stats["profit_factor"] == 0.0
+    assert stats["max_drawdown_in_stake_units"] == -1.0
 
 
 def test_tie_policy_loss_counts_tie_as_a_loss():
@@ -52,3 +55,14 @@ def test_parameters_and_mismatched_lengths_rejected():
         backtest_fixed_expiry(data, pd.Series([CALL, NO_TRADE]), expiry_bars=0)
     with pytest.raises(ValueError):
         backtest_fixed_expiry(data, pd.Series([CALL]), expiry_bars=1)
+
+def test_summary_reports_profit_factor_and_equity_drawdown():
+    results = pd.DataFrame({
+        "outcome": ["WIN", "LOSS", "WIN", "LOSS"],
+        "pnl": [0.8, -1.0, 0.8, -1.0],
+        "payout": [0.8, 0.8, 0.8, 0.8],
+    })
+    stats = summarize_results(results)
+    assert stats["profit_factor"] == pytest.approx(0.8)
+    assert stats["max_drawdown_in_stake_units"] == pytest.approx(-1.2)
+    assert stats["expectancy_per_trade"] == pytest.approx(-0.1)

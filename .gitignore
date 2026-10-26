@@ -18,3 +18,4 @@ reviews.jsonl
 bpr02_run_manifest.json
 bpr02_seconds_results.csv
 bpr02_seconds_run_manifest.json
+bpr02_seconds_fold_metrics.csv

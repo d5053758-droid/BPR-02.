@@ -82,6 +82,18 @@ The command writes a trade-level CSV and prints a JSON summary, including win ra
 
 Use `chronological_split(frame, train_fraction=0.70)` to reserve the later portion of data as a test set without shuffling. Use `expanding_window_splits(n_rows, initial_train_size=..., test_size=...)` to build multiple expanding training windows and later, non-overlapping test blocks. These helpers create partitions only; they do not fit strategies or automatically prevent a caller from using test results to tune parameters. Keep model selection and final evaluation data separate. The `run_walk_forward(...)` helper evaluates the baseline on each future test block and returns both trade-level results and a per-fold metrics table; it does not tune the rule on the test blocks.
 
+## End-to-end test with a historical CSV replay
+
+BPR-02 provides a deterministic replay adapter so the signal pipeline can be tested without a live source. It is explicitly **not a real-time connection**.
+
+In one terminal, replay candles from a CSV and pipe them into the JSONL signal bridge:
+
+```bash
+bpr02-replay data.csv --symbol EURUSD --timeframe M1 --interval-seconds 1 | bpr02-stream --lookback 12 --symbol EURUSD --timeframe M1 --events-out events.jsonl
+```
+
+Omit `--interval-seconds 1` to replay as fast as possible. Each replayed line is marked `source_mode: historical_replay_not_live`. The bridge writes its event log; it does not submit orders.
+
 ## Signal bridge (authorized feed input; no execution)
 
 The bridge does not connect to Pocket Option or any network endpoint. It reads one completed candle per JSON Lines record from standard input, generates a deterministic research alert, writes each event to an append-only log, and echoes events to standard output. A compatible adapter for a feed you are authorized to use can pipe records into it.
@@ -127,6 +139,7 @@ Choose `review` to mark an alert for manual inspection or `ignore` to dismiss it
 - `bpr02/walkforward.py`: per-fold fixed-expiry simulations and fold metrics.
 - `bpr02/signal_bridge.py`: closed-candle JSONL alert bridge and append-only event log.
 - `bpr02/review.py`: append-only manual signal review journal.
+- `bpr02/replay.py`: deterministic historical CSV-to-JSONL test adapter (not live).
 - `bpr02/sensitivity.py`: chronological train/test sensitivity grid for lookback and expiry.
 - `bpr02/audit.py`: timestamp-interval, gap and OHLC diagnostics.
 - `bpr02/cli.py`: command-line interface.

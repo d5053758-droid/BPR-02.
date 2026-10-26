@@ -74,8 +74,9 @@ def resample_ohlc_to_interval(
         rows = [index + 1 for index, bad in enumerate((bad_high | bad_low).to_numpy()) if bad][:5]
         raise ValueError(f"invalid OHLC candle range at input row(s): {rows}")
 
-    source_ns = source_interval * 1_000_000_000
-    if (timestamps.astype("int64") % source_ns != 0).any():
+    # Compare timestamps directly instead of relying on datetime64's internal
+    # integer unit, which may differ across supported pandas versions.
+    if (timestamps.dt.floor(f"{source_interval}s") != timestamps).any():
         raise ValueError(
             f"source timestamps must align to the {source_interval}-second UTC grid"
         )

@@ -74,6 +74,8 @@ def backtest_fixed_expiry(
         elif outcome == "TIE" and tie_policy == "push":
             pnl = 0.0
         else:
+            if outcome == "TIE" and tie_policy == "loss":
+                outcome = "LOSS"
             pnl = -stake
 
         trades.append({

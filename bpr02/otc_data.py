@@ -277,7 +277,10 @@ def convert_tick_log_to_quotes(
                 other_events_ignored += 1
                 continue
             try:
-                raw_epoch = int(record.get("source_time_epoch_seconds", payload["time"]))
+                raw_time_value = record.get("source_time_epoch_seconds")
+                if raw_time_value is None:
+                    raw_time_value = payload["time"]
+                raw_epoch = int(raw_time_value)
                 price = float(payload["price"])
             except (KeyError, TypeError, ValueError, OverflowError) as exc:
                 invalid_rows += 1

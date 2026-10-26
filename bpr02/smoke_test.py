@@ -28,6 +28,7 @@ from .review import record_review
 from .sensitivity import run_sensitivity_analysis
 from .signal_bridge import SignalBridge, run_jsonl_bridge
 from .signals import CALL, NO_TRADE, PUT, sweep_reclaim_signals
+from .subminute import backtest_seconds_expiry, run_seconds_walk_forward
 from .walkforward import run_walk_forward
 
 LOOKBACK = 5
@@ -141,6 +142,68 @@ def run_smoke_test() -> dict[str, object]:
             raise RuntimeError("Sensitivity grid produced an unexpected result")
         completed.append("sensitivity_grid")
 
+        # Exercise the second-expiry engine with synthetic one-second observations.
+        # This verifies code paths only; it does not approximate OTC market truth.
+        quote_periods = (ROW_COUNT + 2) * 60
+        quote_times = pd.date_range(
+            candles["timestamp"].iloc[0],
+            periods=quote_periods,
+            freq="s",
+        )
+        candle_closes = candles["close"].to_numpy(dtype=float)
+        quote_prices: list[float] = []
+        for quote_time in quote_times:
+            elapsed = int((quote_time - candles["timestamp"].iloc[0]).total_seconds())
+            minute_index = min(elapsed // 60, len(candle_closes) - 1)
+            fraction = (elapsed % 60) / 60.0
+            next_index = min(minute_index + 1, len(candle_closes) - 1)
+            price = candle_closes[minute_index] + (
+                candle_closes[next_index] - candle_closes[minute_index]
+            ) * fraction
+            quote_prices.append(float(price))
+        synthetic_quotes = pd.DataFrame({
+            "timestamp": quote_times,
+            "price": quote_prices,
+        })
+        seconds_trades, seconds_diagnostics = backtest_seconds_expiry(
+            candles,
+            signals,
+            synthetic_quotes,
+            bar_seconds=60,
+            bar_timestamp_label="open",
+            expiry_seconds=3,
+            max_quote_delay_seconds=0,
+            payout=0.80,
+            stake=1.0,
+        )
+        if seconds_diagnostics["expiry_seconds"] != 3.0:
+            raise RuntimeError("Seconds-expiry simulation did not preserve the requested expiry")
+        if seconds_diagnostics["modeled_trades"] + seconds_diagnostics["unmodeled_signals"] != seconds_diagnostics["candidate_signals"]:
+            raise RuntimeError("Seconds-expiry diagnostics failed to account for candidate signals")
+        completed.append("seconds_expiry_backtest")
+
+        seconds_walk_trades, seconds_fold_metrics, seconds_wf_diagnostics = run_seconds_walk_forward(
+            candles,
+            signals,
+            synthetic_quotes,
+            initial_train_size=30,
+            test_size=10,
+            step_size=10,
+            bar_seconds=60,
+            bar_timestamp_label="open",
+            expiry_seconds=3,
+            max_quote_delay_seconds=0,
+            payout=0.80,
+            stake=1.0,
+        )
+        if seconds_fold_metrics.empty:
+            raise RuntimeError("Seconds-expiry walk-forward evaluation returned no folds")
+        if not (seconds_fold_metrics["training_end"] < seconds_fold_metrics["test_start"]).all():
+            raise RuntimeError("Seconds-expiry walk-forward contains non-future test windows")
+        if seconds_wf_diagnostics["modeled_trades"] + seconds_wf_diagnostics["unmodeled_signals"] != seconds_wf_diagnostics["candidate_signals"]:
+            raise RuntimeError("Seconds walk-forward diagnostics failed to account for candidate signals")
+        completed.append("seconds_expiry_walk_forward")
+
         # Exercise the same CSV -> JSONL replay -> bridge -> review path used in E2E tests.
         replay_stdout = StringIO()
         with contextlib.redirect_stdout(replay_stdout):
@@ -223,6 +286,12 @@ def run_smoke_test() -> dict[str, object]:
             "walk_forward_folds": len(fold_metrics),
             "walk_forward_simulated_trades": len(walk_trades),
             "sensitivity_rows": len(sensitivity),
+            "seconds_expiry_candidates": seconds_diagnostics["candidate_signals"],
+            "seconds_expiry_modeled_trades": len(seconds_trades),
+            "seconds_expiry_unmodeled_signals": seconds_diagnostics["unmodeled_signals"],
+            "seconds_walk_forward_folds": len(seconds_fold_metrics),
+            "seconds_walk_forward_candidates": seconds_wf_diagnostics["candidate_signals"],
+            "seconds_walk_forward_modeled_trades": len(seconds_walk_trades),
             "replay_events": len(events),
             "orders_submitted": 0,
             "execution_adapter": "disabled",

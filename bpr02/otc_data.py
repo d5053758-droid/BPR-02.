@@ -108,7 +108,11 @@ def fetch_historical_candles(
         raise ValueError("symbol must be a non-empty instrument id")
     if any(character in symbol for character in (",", "\n", "\r")):
         raise ValueError(f"invalid symbol value: {symbol!r}")
-    if isinstance(timeframe_seconds, bool) or timeframe_seconds not in SUPPORTED_OTC_TIMEFRAMES_SECONDS:
+    if (
+        isinstance(timeframe_seconds, bool)
+        or not isinstance(timeframe_seconds, int)
+        or timeframe_seconds not in SUPPORTED_OTC_TIMEFRAMES_SECONDS
+    ):
         raise ValueError(
             "timeframe_seconds must be one of "
             + ", ".join(str(item) for item in SUPPORTED_OTC_TIMEFRAMES_SECONDS)
@@ -578,6 +582,23 @@ def build_parser() -> argparse.ArgumentParser:
     record.add_argument("--append", action="store_true")
     record.add_argument("--api-key-env", default="OTCHARTS_API_KEY")
 
+    candles = subparsers.add_parser(
+        "candles",
+        help="Fetch one read-only historical OTC candle page (one API request, no polling)",
+    )
+    candles.add_argument("--symbol", default=DEFAULT_SYMBOL)
+    candles.add_argument("--timeframe-seconds", type=int, choices=SUPPORTED_OTC_TIMEFRAMES_SECONDS, default=5)
+    candles.add_argument("--limit", type=int, default=1500, help="Rows to request in this page, from 1 to 1500")
+    candles.add_argument(
+        "--source-clock-ahead-seconds",
+        type=int,
+        default=DEFAULT_SOURCE_CLOCK_AHEAD_SECONDS,
+        help="Clock offset documented by OTCharts for its Pocket Option OTC book",
+    )
+    candles.add_argument("--output", default="otc_candles_5s.csv")
+    candles.add_argument("--overwrite", action="store_true")
+    candles.add_argument("--api-key-env", default="OTCHARTS_API_KEY")
+
     convert = subparsers.add_parser("convert", help="Convert a raw JSONL tick log to quote CSV")
     convert.add_argument("raw_log")
     convert.add_argument("--symbol", default=DEFAULT_SYMBOL)
@@ -595,7 +616,18 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        if args.command == "record":
+        if args.command == "candles":
+            api_key = os.environ.get(args.api_key_env, "")
+            result = fetch_historical_candles(
+                api_key=api_key,
+                output_path=args.output,
+                symbol=args.symbol,
+                timeframe_seconds=args.timeframe_seconds,
+                limit=args.limit,
+                source_clock_ahead_seconds=args.source_clock_ahead_seconds,
+                overwrite=args.overwrite,
+            )
+        elif args.command == "record":
             api_key = os.environ.get(args.api_key_env, "")
             result = record_live_ticks(
                 api_key=api_key,

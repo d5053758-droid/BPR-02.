@@ -82,6 +82,33 @@ The command writes a trade-level CSV and prints a JSON summary, including win ra
 
 Use `chronological_split(frame, train_fraction=0.70)` to reserve the later portion of data as a test set without shuffling. Use `expanding_window_splits(n_rows, initial_train_size=..., test_size=...)` to build multiple expanding training windows and later, non-overlapping test blocks. These helpers create partitions only; they do not fit strategies or automatically prevent a caller from using test results to tune parameters. Keep model selection and final evaluation data separate. The `run_walk_forward(...)` helper evaluates the baseline on each future test block and returns both trade-level results and a per-fold metrics table; it does not tune the rule on the test blocks.
 
+## Signal bridge (authorized feed input; no execution)
+
+The bridge does not connect to Pocket Option or any network endpoint. It reads one completed candle per JSON Lines record from standard input, generates a deterministic research alert, writes each event to an append-only log, and echoes events to standard output. A compatible adapter for a feed you are authorized to use can pipe records into it.
+
+Example record (one JSON object per line):
+
+```json
+{"timestamp":"2025-01-01T00:00:00Z","open":1.04,"high":1.041,"low":1.039,"close":1.0405,"closed":true,"symbol":"EURUSD","timeframe":"M1","source":"authorized_demo_feed"}
+```
+
+Install the project and start the bridge:
+
+```bash
+python -m pip install -e .
+bpr02-stream --lookback 12 --expiry-bars 1 --symbol EURUSD --timeframe M1 --source authorized_demo_feed --events-out events.jsonl
+```
+
+Paste or pipe complete-candle JSON Lines into standard input (Ctrl+D on Linux/macOS or Ctrl+Z then Enter on Windows ends input). For warm-up, an optional valid history CSV can be supplied with `--history-csv`. The first candles produce `NO TRADE` until enough history exists. Repeated, out-of-order or unfinished candles are rejected. Each event includes `event_id`, timestamp, signal, reason, expiry assumption, and `order_sent: false`.
+
+To record a manual review (this **does not** submit an order):
+
+```bash
+bpr02-review --events events.jsonl --event-id EVENT_ID_FROM_ALERT --decision review --journal reviews.jsonl --note "Compared with platform chart"
+```
+
+Choose `review` to mark an alert for manual inspection or `ignore` to dismiss it. Neither decision means a trade has been placed. This bridge is ready for an authorized feed adapter, but no Pocket Option adapter or connection is included until the platform's permitted interface and data format are verified.
+
 ## Important limitations
 
 - Historical simulation is not a guarantee of future results.
@@ -98,6 +125,8 @@ Use `chronological_split(frame, train_fraction=0.70)` to reserve the later porti
 - `bpr02/backtest.py`: fixed-expiry simulation and metrics.
 - `bpr02/evaluation.py`: chronological train/test and expanding walk-forward splits.
 - `bpr02/walkforward.py`: per-fold fixed-expiry simulations and fold metrics.
+- `bpr02/signal_bridge.py`: closed-candle JSONL alert bridge and append-only event log.
+- `bpr02/review.py`: append-only manual signal review journal.
 - `bpr02/sensitivity.py`: chronological train/test sensitivity grid for lookback and expiry.
 - `bpr02/audit.py`: timestamp-interval, gap and OHLC diagnostics.
 - `bpr02/cli.py`: command-line interface.

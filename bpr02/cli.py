@@ -5,7 +5,7 @@ import argparse
 import json
 from pathlib import Path
 
-from .audit import audit_candles
+from .audit import audit_csv_file
 from .backtest import backtest_fixed_expiry, summarize_results
 from .data import load_ohlc_csv
 from .sensitivity import run_sensitivity_analysis
@@ -57,11 +57,9 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        candles = load_ohlc_csv(args.csv)
-
         if args.audit_data:
-            report = audit_candles(
-                candles,
+            report = audit_csv_file(
+                args.csv,
                 expected_interval_seconds=args.expected_interval_seconds,
             )
             destination = Path(args.audit_output)
@@ -73,6 +71,8 @@ def main(argv: list[str] | None = None) -> int:
                 **report,
             }, indent=2, default=str))
             return 0 if report["structurally_valid"] else 2
+
+        candles = load_ohlc_csv(args.csv)
 
         if args.sensitivity:
             sensitivity = run_sensitivity_analysis(

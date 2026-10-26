@@ -97,3 +97,36 @@ def test_cli_refuses_manifest_path_that_matches_source_csv(tmp_path, capsys):
     assert code == 2
     assert "manifest-output" in output
     assert source.read_bytes() == original
+
+
+def test_cli_summary_exposes_signals_excluded_by_timestamp_gaps(tmp_path, capsys):
+    source = tmp_path / "gapped-candles.csv"
+    output_path = tmp_path / "trades.csv"
+    manifest_path = tmp_path / "manifest.json"
+    frame = pd.DataFrame({
+        "timestamp": pd.to_datetime([
+            "2025-01-01T00:00:00Z",
+            "2025-01-01T00:01:00Z",
+            "2025-01-01T00:02:00Z",
+            "2025-01-01T00:04:00Z",
+        ]),
+        "open": [10.0, 10.0, 9.0, 9.2],
+        "high": [11.0, 11.0, 10.0, 10.0],
+        "low": [9.0, 9.5, 8.5, 9.0],
+        "close": [10.0, 10.0, 9.5, 9.8],
+    })
+    frame.to_csv(source, index=False)
+
+    code = main([
+        str(source), "--lookback", "2", "--expected-interval-seconds", "60",
+        "--output", str(output_path), "--manifest-output", str(manifest_path),
+    ])
+    output = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert output["candidate_signals"] == 1
+    assert output["eligible_candidate_signals"] == 0
+    assert output["excluded_due_to_timestamp_gaps"] == 1
+    assert output["excluded_due_to_missing_future_bars"] == 0
+    assert output["candidate_coverage_ratio"] == 0.0
+    saved_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert saved_manifest["summary"]["excluded_due_to_timestamp_gaps"] == 1

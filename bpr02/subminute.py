@@ -59,6 +59,26 @@ def _parse_explicit_utc(values: pd.Series, *, field_name: str) -> pd.Series:
     return pd.Series(pd.DatetimeIndex(parsed), index=values.index, name="timestamp")
 
 
+def _require_explicit_timezone_in_ohlc_csv(path: str | Path) -> None:
+    """Reject naive source timestamps before the generic CSV loader normalizes them."""
+    source = Path(path)
+    try:
+        header = pd.read_csv(source, nrows=0)
+    except Exception as exc:
+        raise ValueError(f"could not read signal candle CSV header: {exc}") from exc
+    columns = {str(column).strip().lower(): column for column in header.columns}
+    timestamp_column = next(
+        (columns[alias] for alias in ("timestamp", "datetime", "date_time", "date", "time") if alias in columns),
+        None,
+    )
+    if timestamp_column is None:
+        raise ValueError("signal candle CSV must have a timestamp column with an explicit timezone/UTC offset")
+    try:
+        raw_timestamps = pd.read_csv(source, usecols=[timestamp_column], dtype=str)[timestamp_column]
+    except Exception as exc:
+        raise ValueError(f"could not read signal candle timestamps: {exc}") from exc
+    _parse_explicit_utc(raw_timestamps, field_name="signal candle CSV")
+
 def load_quote_csv(path: str | Path) -> pd.DataFrame:
     """Load timestamped scalar quotes from CSV with explicit timezone information.
 
@@ -363,6 +383,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.lookback < 2:
             raise ValueError("--lookback must be >= 2")
+        _require_explicit_timezone_in_ohlc_csv(candles_path)
         candles = load_ohlc_csv(candles_path)
         quotes = load_quote_csv(quotes_path)
         signal_frame = sweep_reclaim_signals(candles, lookback=args.lookback)

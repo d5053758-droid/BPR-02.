@@ -53,6 +53,8 @@ def _iter_sse_events(stream: Iterable[bytes]) -> Iterator[tuple[str, str]]:
             data_lines = []
             continue
         if line.startswith(":"):
+            # Treat comments as heartbeat events so finite captures can stop during quiet periods.
+            yield "heartbeat", "{}"
             continue
         if line.startswith("event:"):
             event_name = line.split(":", 1)[1].strip() or "message"

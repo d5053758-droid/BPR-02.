@@ -35,6 +35,9 @@ def assess_readiness(
     *,
     expected_interval_seconds: float | None,
     quote_audit: dict[str, Any] | None = None,
+    provider_report: dict[str, Any] | None = None,
+    candle_source_sha256: str | None = None,
+    expected_symbol: str = "EURUSD_otc",
     max_missing_bars: int = 0,
     lookback: int = 12,
     expiry_bars: int = 1,
@@ -90,6 +93,8 @@ def assess_readiness(
         raise ValueError("expiry_bars must be an integer >= 1")
     if bar_timestamp_label not in ("open", "close"):
         raise ValueError("bar_timestamp_label must be 'open' or 'close'")
+    if not isinstance(expected_symbol, str) or not expected_symbol.strip():
+        raise ValueError("expected_symbol must be a non-empty string")
 
     gates: dict[str, dict[str, Any]] = {}
 
@@ -160,6 +165,98 @@ def assess_readiness(
             f"large gaps: {large_gap_count}; unexplained irregular intervals: {unexplained_irregular}."
         ),
     )
+
+    provider_quality: dict[str, Any] | None = None
+    if provider_report is not None:
+        report_mode_ok = provider_report.get("mode") == "read_only_otc_candle_fetch"
+        report_hash = provider_report.get("output_sha256")
+        hash_matches_csv = (
+            isinstance(report_hash, str)
+            and isinstance(candle_source_sha256, str)
+            and report_hash == candle_source_sha256
+        )
+        provider_symbol = provider_report.get("symbol")
+        provider_venue = provider_report.get("venue")
+        instrument_matches = (
+            provider_venue == "otc"
+            and provider_symbol == expected_symbol
+        )
+        provider_interval = provider_report.get("timeframe_seconds")
+        interval_matches = (
+            expected_interval_seconds is not None
+            and not isinstance(provider_interval, bool)
+            and isinstance(provider_interval, (int, float))
+            and math.isfinite(float(provider_interval))
+            and float(provider_interval) == float(expected_interval_seconds)
+        )
+
+        provider_gaps = provider_report.get("provider_gaps")
+        gap_metadata_valid = (
+            isinstance(provider_gaps, dict)
+            and isinstance(provider_gaps.get("runs"), int)
+            and not isinstance(provider_gaps.get("runs"), bool)
+            and provider_gaps.get("runs") >= 0
+            and isinstance(provider_gaps.get("missingBars"), int)
+            and not isinstance(provider_gaps.get("missingBars"), bool)
+            and provider_gaps.get("missingBars") >= 0
+        )
+        provider_gap_runs = provider_gaps.get("runs") if gap_metadata_valid else None
+        provider_missing_bars = provider_gaps.get("missingBars") if gap_metadata_valid else None
+        provider_gaps_within_budget = (
+            gap_metadata_valid and provider_missing_bars <= max_missing_bars
+        )
+
+        gate(
+            "provider_report_type",
+            report_mode_ok,
+            "Acquisition report identifies a BPR-02 read-only OTC candle fetch."
+            if report_mode_ok
+            else "The supplied JSON is not a recognized BPR-02 OTC candle acquisition report.",
+        )
+        gate(
+            "provider_report_matches_candle_csv",
+            hash_matches_csv,
+            "The acquisition report's output SHA-256 matches the exact candle CSV being audited."
+            if hash_matches_csv
+            else "The acquisition report hash is missing or does not match this candle CSV.",
+        )
+        gate(
+            "provider_instrument_matches_expected",
+            instrument_matches,
+            f"Reported venue/symbol: {provider_venue!r}/{provider_symbol!r}; expected: 'otc'/{expected_symbol!r}.",
+        )
+        gate(
+            "provider_interval_matches_expected",
+            interval_matches,
+            f"Provider timeframe: {provider_interval!r}; expected source interval: {expected_interval_seconds!r} seconds.",
+        )
+        gate(
+            "provider_gap_metadata_within_budget",
+            provider_gaps_within_budget,
+            (
+                f"Provider reports {provider_gap_runs} gap run(s) and {provider_missing_bars} missing bar(s); "
+                f"allowed missing bars: {max_missing_bars}."
+                if gap_metadata_valid
+                else "Provider gap metadata must contain non-negative integer 'runs' and 'missingBars' fields."
+            ),
+        )
+        provider_quality = {
+            "mode": provider_report.get("mode"),
+            "source": provider_report.get("source"),
+            "venue": provider_venue,
+            "symbol": provider_symbol,
+            "timeframe_seconds": provider_interval,
+            "instrument_status": provider_report.get("instrument_status", "not_reported"),
+            "provider_gaps": provider_gaps,
+            "provider_output_sha256": report_hash,
+            "output_sha256_matches_csv": hash_matches_csv,
+            "report_type_recognized": report_mode_ok,
+            "instrument_matches_expected": instrument_matches,
+            "interval_matches_expected": interval_matches,
+            "gap_metadata_valid": gap_metadata_valid,
+            "provider_gap_metadata_within_budget": provider_gaps_within_budget,
+            "note": "This validates consistency of local report metadata and file hashes; it is not a cryptographic provider attestation.",
+        }
 
     quote_coverage: dict[str, Any] | None = None
     mode = "bar_based_research"
@@ -276,6 +373,8 @@ def assess_readiness(
         "gates": gates,
         "parameters": {
             "expected_interval_seconds": expected_interval_seconds,
+            "expected_symbol": expected_symbol,
+            "provider_report_supplied": provider_report is not None,
             "max_missing_bars": max_missing_bars,
             "lookback": lookback,
             "expiry_bars": expiry_bars,
@@ -291,6 +390,7 @@ def assess_readiness(
             "bar_timestamp_label": bar_timestamp_label,
         },
         "candle_quality": candle_audit,
+        "provider_quality": provider_quality,
         "quote_quality": quote_audit,
         "quote_coverage": quote_coverage,
         "market_feed_verified": False,
@@ -313,6 +413,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("candles_csv", help="Historical OHLC CSV")
     parser.add_argument("--quotes-csv", help="Optional timestamped quote CSV with timestamp and price columns")
+    parser.add_argument(
+        "--provider-report",
+        help="Optional JSON sidecar from bpr02-otc-data candles; verifies its hash, symbol, timeframe and gap metadata against this CSV",
+    )
+    parser.add_argument(
+        "--expected-symbol",
+        default="EURUSD_otc",
+        help="Expected symbol when --provider-report is supplied (default EURUSD_otc)",
+    )
     parser.add_argument(
         "--expected-interval-seconds",
         type=float,
@@ -348,12 +457,20 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     candle_path = Path(args.candles_csv)
     quote_path = Path(args.quotes_csv) if args.quotes_csv else None
+    provider_report_path = Path(args.provider_report) if args.provider_report else None
     output_path = Path(args.output)
     input_paths = {candle_path.resolve()}
     if quote_path is not None:
         input_paths.add(quote_path.resolve())
+    if provider_report_path is not None:
+        input_paths.add(provider_report_path.resolve())
     if quote_path is not None and quote_path.resolve() == candle_path.resolve():
         print("ERROR: candles and quotes must be different files", file=sys.stderr)
+        return 2
+    if provider_report_path is not None and provider_report_path.resolve() in {
+        candle_path.resolve(), *( [quote_path.resolve()] if quote_path is not None else [] )
+    }:
+        print("ERROR: provider report must differ from the candle and quote CSV files", file=sys.stderr)
         return 2
     if output_path.resolve() in input_paths:
         print("ERROR: report output must not overwrite either input CSV", file=sys.stderr)
@@ -388,6 +505,13 @@ def main(argv: list[str] | None = None) -> int:
         if not math.isfinite(args.max_quote_delay_seconds) or args.max_quote_delay_seconds < 0:
             raise ValueError("--max-quote-delay-seconds must be finite and >= 0")
 
+        provider_report = None
+        if provider_report_path is not None:
+            provider_report = json.loads(provider_report_path.read_text(encoding="utf-8"))
+            if not isinstance(provider_report, dict):
+                raise ValueError("--provider-report must contain a JSON object")
+
+        candle_sha256 = sha256_file(candle_path)
         candle_audit = audit_csv_file(
             candle_path,
             expected_interval_seconds=args.expected_interval_seconds,
@@ -408,6 +532,9 @@ def main(argv: list[str] | None = None) -> int:
             candle_audit,
             expected_interval_seconds=args.expected_interval_seconds,
             quote_audit=quote_audit,
+            provider_report=provider_report,
+            candle_source_sha256=candle_sha256,
+            expected_symbol=args.expected_symbol,
             max_missing_bars=args.max_missing_bars,
             lookback=args.lookback,
             expiry_bars=args.expiry_bars,
@@ -421,9 +548,18 @@ def main(argv: list[str] | None = None) -> int:
         report["source_files"] = {
             "candles": {
                 "file": candle_path.name,
-                "sha256": sha256_file(candle_path),
+                "sha256": candle_sha256,
                 "bytes": candle_path.stat().st_size,
             },
+            "provider_report": (
+                {
+                    "file": provider_report_path.name,
+                    "sha256": sha256_file(provider_report_path),
+                    "bytes": provider_report_path.stat().st_size,
+                }
+                if provider_report_path is not None
+                else None
+            ),
             "quotes": (
                 {
                     "file": quote_path.name,

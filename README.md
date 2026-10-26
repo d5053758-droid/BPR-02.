@@ -51,6 +51,14 @@ To run expanding walk-forward evaluation and export a per-fold metrics CSV:
 python -m bpr02 path/to/candles.csv --walk-forward --initial-train-size 5000 --test-size 1000 --step-size 1000 --lookback 12 --output trades.csv --fold-summary folds.csv
 ```
 
+To compare lookback and expiry combinations across earlier training data and a later holdout segment:
+
+```bash
+python -m bpr02 path/to/candles.csv --sensitivity --lookbacks 6,12,18 --expiry-grid 1,2,3 --train-fraction 0.70 --sensitivity-output sensitivity.csv
+```
+
+This writes one row per lookback/expiry combination and segment (train/test). The grid is a diagnostic, not an automatic optimizer: repeated choices based on the holdout set can overfit it.
+
 The walk-forward mode requires both `--initial-train-size` and `--test-size`. Training windows expand chronologically; test windows stay in the future and do not overlap by default. Choose window sizes based on the dataset, and do not repeatedly tune the rule against the final evaluation window.
 
 Options:
@@ -82,5 +90,6 @@ Use `chronological_split(frame, train_fraction=0.70)` to reserve the later porti
 - `bpr02/backtest.py`: fixed-expiry simulation and metrics.
 - `bpr02/evaluation.py`: chronological train/test and expanding walk-forward splits.
 - `bpr02/walkforward.py`: per-fold fixed-expiry simulations and fold metrics.
+- `bpr02/sensitivity.py`: chronological train/test sensitivity grid for lookback and expiry.
 - `bpr02/cli.py`: command-line interface.
 - `tests/`: regression tests.

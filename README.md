@@ -96,7 +96,7 @@ Omit `--interval-seconds 1` to replay as fast as possible. Each replayed line is
 
 ## Connecting a data source
 
-The adapter contract and preconditions for any future platform connector are documented in [docs/FEED_ADAPTER_CONTRACT.md](docs/FEED_ADAPTER_CONTRACT.md). A provider-specific connection has not been implemented because an authorized, documented Pocket Option data interface has not been established in this project.
+The adapter contract and preconditions for any future platform connector are documented in [docs/FEED_ADAPTER_CONTRACT.md](docs/FEED_ADAPTER_CONTRACT.md). The current feasibility investigation is tracked in [docs/POCKET_OPTION_CONNECTOR_RESEARCH.md](docs/POCKET_OPTION_CONNECTOR_RESEARCH.md). A provider-specific connection has not been implemented because an authorized, documented Pocket Option data interface has not been established in this project.
 
 ## Signal bridge (authorized feed input; no execution)
 

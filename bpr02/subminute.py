@@ -40,22 +40,33 @@ def _as_finite_number(value: object, name: str, *, minimum: float, inclusive: bo
 
 
 def _parse_explicit_utc(values: pd.Series, *, field_name: str) -> pd.Series:
-    """Parse timestamps without silently treating timezone-naive input as UTC."""
-    parsed: list[pd.Timestamp] = []
-    for row_number, value in enumerate(values.tolist(), start=1):
-        try:
-            timestamp = pd.Timestamp(value)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"{field_name} has an invalid timestamp at row {row_number}") from exc
-        if pd.isna(timestamp):
-            raise ValueError(f"{field_name} has a missing timestamp at row {row_number}")
-        if timestamp.tzinfo is None or timestamp.utcoffset() is None:
-            raise ValueError(
-                f"{field_name} timestamps must include a timezone/UTC offset; "
-                f"row {row_number} is timezone-naive"
-            )
-        parsed.append(timestamp.tz_convert("UTC"))
-    return pd.Series(pd.DatetimeIndex(parsed), index=values.index, name="timestamp")
+    """Vectorized timestamp parser that refuses timezone-naive source values."""
+    missing = values.isna().to_numpy()
+    if missing.any():
+        row_number = int(next(index for index, is_missing in enumerate(missing, start=1) if is_missing))
+        raise ValueError(f"{field_name} has a missing timestamp at row {row_number}")
+
+    rendered = values.astype("string").str.strip()
+    has_timezone = rendered.str.contains(
+        r"(?:[zZ]|[+-]\d{2}:?\d{2})$",
+        regex=True,
+        na=False,
+    )
+    invalid_timezone = ~has_timezone.to_numpy()
+    if invalid_timezone.any():
+        row_number = int(next(index for index, invalid in enumerate(invalid_timezone, start=1) if invalid))
+        raise ValueError(
+            f"{field_name} timestamps must include a timezone/UTC offset; "
+            f"row {row_number} is timezone-naive"
+        )
+
+    try:
+        parsed = pd.to_datetime(values, errors="raise", utc=True, format="mixed")
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(f"{field_name} contains an invalid timestamp: {exc}") from exc
+    if parsed.isna().any():
+        raise ValueError(f"{field_name} timestamps must not be missing")
+    return pd.Series(parsed, index=values.index, name="timestamp")
 
 
 def _require_explicit_timezone_in_ohlc_csv(path: str | Path) -> None:

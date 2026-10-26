@@ -36,6 +36,8 @@ def assess_readiness(
     expected_interval_seconds: float | None,
     quote_audit: dict[str, Any] | None = None,
     max_missing_bars: int = 0,
+    lookback: int = 12,
+    expiry_bars: int = 1,
     expiry_seconds: float = 3.0,
     target_resolution_fraction: float = 0.25,
     max_quote_p95_gap_seconds: float | None = None,
@@ -82,6 +84,10 @@ def assess_readiness(
         quote_gap_threshold_source = "not_configured"
     if isinstance(max_missing_bars, bool) or not isinstance(max_missing_bars, int) or max_missing_bars < 0:
         raise ValueError("max_missing_bars must be an integer >= 0")
+    if isinstance(lookback, bool) or not isinstance(lookback, int) or lookback < 2:
+        raise ValueError("lookback must be an integer >= 2")
+    if isinstance(expiry_bars, bool) or not isinstance(expiry_bars, int) or expiry_bars < 1:
+        raise ValueError("expiry_bars must be an integer >= 1")
     if bar_timestamp_label not in ("open", "close"):
         raise ValueError("bar_timestamp_label must be 'open' or 'close'")
 
@@ -114,6 +120,20 @@ def assess_readiness(
         "minimum_candle_history",
         rows >= 2,
         f"{rows} candle row(s); at least two are required to inspect timestamp spacing.",
+    )
+    required_history_rows = lookback + 1 if quote_audit is not None else lookback + expiry_bars + 1
+    gate(
+        "minimum_strategy_history",
+        rows >= required_history_rows,
+        (
+            f"{rows} candle row(s); this configuration needs at least {required_history_rows} "
+            f"to provide lookback={lookback} and "
+            + (
+                "at least one candidate-signal candle for quote-based expiry research."
+                if quote_audit is not None
+                else f"expiry_bars={expiry_bars} after a candidate-signal candle."
+            )
+        ),
     )
     gate(
         "candle_structure",
@@ -257,6 +277,9 @@ def assess_readiness(
         "parameters": {
             "expected_interval_seconds": expected_interval_seconds,
             "max_missing_bars": max_missing_bars,
+            "lookback": lookback,
+            "expiry_bars": expiry_bars,
+            "minimum_required_candle_rows": required_history_rows,
             "expiry_seconds": expiry,
             "target_resolution_fraction": fraction,
             "max_quote_p95_gap_seconds": max_quote_p95_gap_seconds,
@@ -296,6 +319,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Required source candle spacing, e.g. 60 for M1 or 5 for five-second candles",
     )
     parser.add_argument("--max-missing-bars", type=int, default=0, help="Allowed estimated missing candle slots (default 0)")
+    parser.add_argument("--lookback", type=int, default=12, help="Strategy lookback in candles (default 12)")
+    parser.add_argument("--expiry-bars", type=int, default=1, help="Bar-backtest expiry in candles (default 1; ignored for quote-based settlement)")
     parser.add_argument("--expiry-seconds", type=float, default=3.0)
     parser.add_argument(
         "--target-resolution-fraction",
@@ -344,6 +369,10 @@ def main(argv: list[str] | None = None) -> int:
             )
         if isinstance(args.max_missing_bars, bool) or args.max_missing_bars < 0:
             raise ValueError("--max-missing-bars must be an integer >= 0")
+        if args.lookback < 2:
+            raise ValueError("--lookback must be >= 2")
+        if args.expiry_bars < 1:
+            raise ValueError("--expiry-bars must be >= 1")
         if not math.isfinite(args.expiry_seconds) or args.expiry_seconds <= 0:
             raise ValueError("--expiry-seconds must be finite and > 0")
         if not math.isfinite(args.target_resolution_fraction) or not 0 < args.target_resolution_fraction <= 1:
@@ -380,6 +409,8 @@ def main(argv: list[str] | None = None) -> int:
             expected_interval_seconds=args.expected_interval_seconds,
             quote_audit=quote_audit,
             max_missing_bars=args.max_missing_bars,
+            lookback=args.lookback,
+            expiry_bars=args.expiry_bars,
             expiry_seconds=args.expiry_seconds,
             target_resolution_fraction=args.target_resolution_fraction,
             max_quote_p95_gap_seconds=args.max_quote_p95_gap_seconds,

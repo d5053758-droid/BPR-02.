@@ -48,6 +48,8 @@ Keep the input CSV and its manifest together when archiving research results. If
 
 The CSV must contain a timestamp column (one of `timestamp`, `datetime`, `date_time`, `date` or `time`) and numeric `open`, `high`, `low`, `close` columns. Column names are case-insensitive. Timestamps are parsed as UTC; values without a timezone are interpreted as UTC. Extra columns are preserved. Rows are sorted chronologically, while duplicate timestamps and invalid OHLC ranges are rejected.
 
+For timestamped files, the experimental signal detector resets its lookback after any interval that differs from the inferred most common candle spacing. The bar-based backtester also omits a simulated trade if the signal-to-settlement window crosses an observed timestamp gap. Inference cannot detect a dataset that has systematically omitted bars but remains regularly spaced; provide and verify the expected interval for the source before trusting a result.
+
 Example:
 
 ```csv
@@ -57,6 +59,35 @@ timestamp,open,high,low,close
 ```
 
 Use a CSV from a source you are permitted to use. Do not commit private account data, API keys, or sensitive historical datasets to this public repository.
+
+## Convert 5-second OTC candles to complete M1 bars
+
+After the one-request data fetch, you can prepare complete 1-minute bars without filling missing prices:
+
+```bash
+bpr02-resample-candles otc_candles_5s.csv \
+  --source-interval-seconds 5 \
+  --target-interval-seconds 60 \
+  --output otc_candles_m1.csv \
+  --report-output otc_resample_report.json \
+  --manifest-output otc_resample_manifest.json
+```
+
+The adapter expects source timestamps to identify the **opening time** of each 5-second candle. It writes a 1-minute OHLC row only when all 12 expected source candles are present on the 5-second UTC grid. Partial minutes are excluded, and the JSON report separately counts partial intervals, estimated missing source slots and fully missing minutes. Nothing is interpolated or forward-filled. The report and manifest fingerprint the input/output data.
+
+Review the report before testing any rule. If the output has time gaps, BPR-02 resets signal lookback at those gaps and will not score a bar-based trade whose signal-to-settlement window crosses one. This automatic continuity check infers the most common observed spacing; it cannot detect a systematic omission when the remaining timestamps are still regularly spaced, so compare the source's declared timeframe with the report.
+
+You can audit the resulting M1 file too:
+
+```bash
+python -m bpr02 otc_candles_m1.csv \
+  --audit-data \
+  --expected-interval-seconds 60 \
+  --audit-output otc_candles_m1_audit.json \
+  --manifest-output otc_candles_m1_audit_manifest.json
+```
+
+This conversion supports M1 pattern/indicator research. It does **not** recover the within-candle price path and is not suitable for reconstructing exact three-second entries or settlement. A clean report proves only structural completeness of the received file, not data-provider authenticity, Pocket Option OTC parity or profitability.
 
 ## Quote-feed quality preflight
 

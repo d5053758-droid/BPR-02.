@@ -15,7 +15,7 @@ from pathlib import Path
 import pandas as pd
 
 from .audit import audit_csv_file
-from .backtest import backtest_fixed_expiry, summarize_results
+from .backtest import backtest_coverage_diagnostics, backtest_fixed_expiry, summarize_results
 from .data import load_ohlc_csv
 from .execution import (
     DisabledExecutionAdapter,
@@ -125,6 +125,25 @@ def run_smoke_test() -> dict[str, object]:
         if metrics["trades"] != len(trades):
             raise RuntimeError("Backtest summary is inconsistent with trade rows")
         completed.append("fixed_expiry_backtest")
+
+        coverage_diagnostics = backtest_coverage_diagnostics(
+            candles,
+            signals,
+            expiry_bars=1,
+            expected_interval_seconds=60,
+        )
+        accounted = (
+            coverage_diagnostics["eligible_candidate_signals"]
+            + coverage_diagnostics["excluded_due_to_timestamp_gaps"]
+            + coverage_diagnostics["excluded_due_to_missing_future_bars"]
+        )
+        if (
+            coverage_diagnostics["candidate_signals"] != signal_count
+            or accounted != signal_count
+            or coverage_diagnostics["timestamp_discontinuities"] != 0
+        ):
+            raise RuntimeError("Backtest coverage diagnostics did not reconcile every synthetic signal")
+        completed.append("backtest_coverage_diagnostics")
 
         walk_trades, fold_metrics = run_walk_forward(
             candles,
@@ -398,6 +417,7 @@ def run_smoke_test() -> dict[str, object]:
             "synthetic_candles": len(candles),
             "candidate_signals": signal_count,
             "simulated_trades": len(trades),
+            "backtest_coverage_diagnostics": coverage_diagnostics,
             "walk_forward_folds": len(fold_metrics),
             "walk_forward_simulated_trades": len(walk_trades),
             "sensitivity_rows": len(sensitivity),

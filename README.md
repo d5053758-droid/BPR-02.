@@ -94,6 +94,10 @@ bpr02-replay data.csv --symbol EURUSD --timeframe M1 --interval-seconds 1 | bpr0
 
 Omit `--interval-seconds 1` to replay as fast as possible. Each replayed line is marked `source_mode: historical_replay_not_live`. The bridge writes its event log; it does not submit orders.
 
+## Connecting a data source
+
+The adapter contract and preconditions for any future platform connector are documented in [docs/FEED_ADAPTER_CONTRACT.md](docs/FEED_ADAPTER_CONTRACT.md). A provider-specific connection has not been implemented because an authorized, documented Pocket Option data interface has not been established in this project.
+
 ## Signal bridge (authorized feed input; no execution)
 
 The bridge does not connect to Pocket Option or any network endpoint. It reads one completed candle per JSON Lines record from standard input, generates a deterministic research alert, writes each event to an append-only log, and echoes events to standard output. A compatible adapter for a feed you are authorized to use can pipe records into it.
@@ -140,6 +144,7 @@ Choose `review` to mark an alert for manual inspection or `ignore` to dismiss it
 - `bpr02/signal_bridge.py`: closed-candle JSONL alert bridge and append-only event log.
 - `bpr02/review.py`: append-only manual signal review journal.
 - `bpr02/replay.py`: deterministic historical CSV-to-JSONL test adapter (not live).
+- `docs/FEED_ADAPTER_CONTRACT.md`: data-provider interface contract and connection requirements.
 - `bpr02/sensitivity.py`: chronological train/test sensitivity grid for lookback and expiry.
 - `bpr02/audit.py`: timestamp-interval, gap and OHLC diagnostics.
 - `bpr02/cli.py`: command-line interface.

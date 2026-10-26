@@ -8,6 +8,7 @@ import pandas as pd
 
 from .signals import CALL, NO_TRADE, PUT
 from .statistics import wilson_interval
+from .time_quality import continuity_segments
 
 TiePolicy = Literal["push", "loss"]
 
@@ -97,6 +98,7 @@ def backtest_fixed_expiry(
     signals: pd.Series | pd.DataFrame,
     *,
     expiry_bars: int = 1,
+    expected_interval_seconds: float | None = None,
     payout: float = 0.80,
     stake: float = 1.0,
     tie_policy: TiePolicy = "push",
@@ -124,6 +126,10 @@ def backtest_fixed_expiry(
 
     frame = candles.copy().reset_index(drop=True)
     frame["timestamp"] = pd.to_datetime(frame["timestamp"], errors="raise", utc=True)
+    continuity, _, _ = continuity_segments(
+        frame, expected_interval_seconds=expected_interval_seconds
+    )
+    continuity = continuity.reset_index(drop=True)
     for column in ("open", "high", "low", "close"):
         frame[column] = pd.to_numeric(frame[column], errors="raise").astype(float)
     signal_series = signal_series.reset_index(drop=True)
@@ -135,6 +141,10 @@ def backtest_fixed_expiry(
         entry_idx = signal_idx + 1
         expiry_idx = entry_idx + expiry_bars - 1
         if entry_idx >= len(frame) or expiry_idx >= len(frame):
+            continue
+        # Never model one trade across a timestamp gap. Otherwise a missing
+        # minute could be mistaken for the next candle in a bar-based expiry.
+        if continuity.iloc[signal_idx] != continuity.iloc[expiry_idx]:
             continue
 
         entry_price = float(frame.at[entry_idx, "open"])

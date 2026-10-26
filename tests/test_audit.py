@@ -48,3 +48,11 @@ def test_audit_infers_interval_and_validates_arguments():
         audit_candles(frame(), expected_interval_seconds=0)
     with pytest.raises(ValueError):
         audit_candles(frame(), max_gap_examples=-1)
+
+def test_audit_rejects_nonfinite_interval_and_empty_frame_is_not_valid():
+    with pytest.raises(ValueError, match="finite value"):
+        audit_candles(frame(), expected_interval_seconds=float("nan"))
+    empty = pd.DataFrame(columns=["timestamp", "open", "high", "low", "close"])
+    result = audit_candles(empty)
+    assert result["rows"] == 0
+    assert result["structurally_valid"] is False

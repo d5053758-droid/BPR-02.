@@ -32,7 +32,7 @@ def test_record_live_ticks_uses_bearer_header_and_never_writes_the_key(tmp_path)
         ("tick", _tick(symbol="GBPUSD_otc", price=1.27001)),
         ("tick", _tick(epoch=1788103261, price=1.10002)),
     )
-    sse = sse.replace(b"event: tick", b": keep-alive\\n\\nevent: tick", 1)
+    sse = sse.replace(b"event: tick", b": keep-alive\n\nevent: tick", 1)
     observed = {}
 
     def fake_urlopen(request, timeout):

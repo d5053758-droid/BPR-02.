@@ -215,7 +215,7 @@ def convert_tick_log_to_quotes(
     raw_log_path: str | Path,
     output_path: str | Path,
     symbol: str = DEFAULT_SYMBOL,
-    source_clock_ahead_seconds: int = DEFAULT_SOURCE_CLOCK_AHEAD_SECONDS,
+    source_clock_ahead_seconds: int | None = None,
     overwrite: bool = False,
 ) -> dict[str, object]:
     """Convert recorded ticks into unique UTC-second quote observations.
@@ -233,7 +233,9 @@ def convert_tick_log_to_quotes(
         raise FileNotFoundError(f"raw tick log not found: {raw_source}")
     if raw_source.resolve() == target.resolve():
         raise ValueError("CSV output path must differ from the raw JSONL log")
-    if isinstance(source_clock_ahead_seconds, bool) or not isinstance(source_clock_ahead_seconds, int):
+    if source_clock_ahead_seconds is not None and (
+        isinstance(source_clock_ahead_seconds, bool) or not isinstance(source_clock_ahead_seconds, int)
+    ):
         raise ValueError("source_clock_ahead_seconds must be an integer number of seconds")
     if target.exists() and not overwrite:
         raise FileExistsError(f"refusing to overwrite existing quote CSV: {target}; pass --overwrite")
@@ -244,6 +246,7 @@ def convert_tick_log_to_quotes(
     other_events_ignored = 0
     invalid_rows = 0
     last_epoch: int | None = None
+    logged_clock_offset: int | None = None
 
     with raw_source.open("r", encoding="utf-8") as source:
         for line_number, raw_line in enumerate(source, start=1):
@@ -255,6 +258,17 @@ def convert_tick_log_to_quotes(
                 raise ValueError(f"invalid JSON at raw log line {line_number}") from exc
             if not isinstance(record, dict):
                 raise ValueError(f"raw log line {line_number} must be a JSON object")
+            recorded_offset = record.get("source_clock_ahead_seconds_configured")
+            if recorded_offset is not None:
+                if isinstance(recorded_offset, bool) or not isinstance(recorded_offset, int):
+                    raise ValueError(f"invalid recorded clock offset at raw log line {line_number}")
+                if logged_clock_offset is None:
+                    logged_clock_offset = recorded_offset
+                elif logged_clock_offset != recorded_offset:
+                    raise ValueError(
+                        "raw log contains different clock-offset settings; "
+                        "keep captures with different settings separate"
+                    )
             if record.get("event") != "tick":
                 other_events_ignored += 1
                 continue
@@ -278,16 +292,31 @@ def convert_tick_log_to_quotes(
                     "do not combine recordings with incompatible clock settings"
                 )
             last_epoch = raw_epoch
-            adjusted_epoch = raw_epoch - source_clock_ahead_seconds
-            if adjusted_epoch in quotes_by_epoch:
+            if raw_epoch in quotes_by_epoch:
                 duplicate_seconds_collapsed += 1
-            quotes_by_epoch[adjusted_epoch] = price
+            quotes_by_epoch[raw_epoch] = price
             tick_rows += 1
 
     if not quotes_by_epoch:
         raise ValueError(f"no tick records for symbol {symbol!r} were found in the raw log")
+    if source_clock_ahead_seconds is None:
+        effective_clock_offset = (
+            logged_clock_offset
+            if logged_clock_offset is not None
+            else DEFAULT_SOURCE_CLOCK_AHEAD_SECONDS
+        )
+    else:
+        effective_clock_offset = source_clock_ahead_seconds
+        if logged_clock_offset is not None and logged_clock_offset != effective_clock_offset:
+            raise ValueError(
+                "requested clock offset does not match the raw log's recorded setting; "
+                "use the same value or keep separate captures separate"
+            )
 
-    ordered = sorted(quotes_by_epoch.items())
+    ordered = sorted(
+        ((epoch - effective_clock_offset, price) for epoch, price in quotes_by_epoch.items()),
+        key=lambda item: item[0],
+    )
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = target.with_name(f".{target.name}.tmp")
     try:
@@ -319,7 +348,7 @@ def convert_tick_log_to_quotes(
         "raw_log": str(raw_source),
         "raw_log_sha256": sha256_file(raw_source),
         "output_csv": str(target),
-        "source_clock_ahead_seconds_subtracted": source_clock_ahead_seconds,
+        "source_clock_ahead_seconds_subtracted": effective_clock_offset,
         "tick_rows_for_symbol": tick_rows,
         "unique_second_quotes": len(ordered),
         "same_second_ticks_collapsed": duplicate_seconds_collapsed,
@@ -365,7 +394,8 @@ def build_parser() -> argparse.ArgumentParser:
     convert.add_argument(
         "--source-clock-ahead-seconds",
         type=int,
-        default=DEFAULT_SOURCE_CLOCK_AHEAD_SECONDS,
+        default=None,
+        help="Defaults to the offset recorded during capture; older logs without metadata default to 7200 seconds",
     )
     convert.add_argument("--output", default="otc_quotes.csv")
     convert.add_argument("--overwrite", action="store_true")

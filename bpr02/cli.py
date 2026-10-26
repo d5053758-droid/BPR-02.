@@ -7,8 +7,19 @@ from pathlib import Path
 
 from .backtest import backtest_fixed_expiry, summarize_results
 from .data import load_ohlc_csv
+from .sensitivity import run_sensitivity_analysis
 from .signals import CALL, PUT, sweep_reclaim_signals
 from .walkforward import run_walk_forward
+
+
+def _parse_int_list(value: str) -> tuple[int, ...]:
+    try:
+        parsed = tuple(int(part.strip()) for part in value.split(",") if part.strip())
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("provide comma-separated integers") from exc
+    if not parsed:
+        raise argparse.ArgumentTypeError("provide at least one integer")
+    return parsed
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -28,6 +39,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--test-size", type=int, help="Rows per test window required with --walk-forward")
     parser.add_argument("--step-size", type=int, help="Rows to advance between test windows (defaults to test size)")
     parser.add_argument("--fold-summary", default="bpr02_fold_metrics.csv", help="Output CSV for walk-forward fold metrics")
+    parser.add_argument("--sensitivity", action="store_true", help="Compare lookback/expiry combinations on chronological train and test segments")
+    parser.add_argument("--lookbacks", type=_parse_int_list, default=(6, 12, 18), help="Comma-separated lookback grid for --sensitivity (e.g. 6,12,18)")
+    parser.add_argument("--expiry-grid", type=_parse_int_list, default=(1, 2, 3), help="Comma-separated expiry grid for --sensitivity (e.g. 1,2,3)")
+    parser.add_argument("--train-fraction", type=float, default=0.70, help="Chronological training fraction for --sensitivity (0..1)")
+    parser.add_argument("--sensitivity-output", default="bpr02_sensitivity.csv", help="Output CSV for sensitivity table")
     return parser
 
 
@@ -35,9 +51,39 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         candles = load_ohlc_csv(args.csv)
-        signals = sweep_reclaim_signals(candles, lookback=args.lookback)
-        fold_summary_path: Path | None = None
 
+        if args.sensitivity:
+            sensitivity = run_sensitivity_analysis(
+                candles,
+                lookbacks=args.lookbacks,
+                expiry_bars=args.expiry_grid,
+                train_fraction=args.train_fraction,
+                payout=args.payout,
+                stake=args.stake,
+                tie_policy=args.tie_policy,
+            )
+            destination = Path(args.sensitivity_output)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            sensitivity.to_csv(destination, index=False)
+            print(json.dumps({
+                "mode": "sensitivity_research_only",
+                "source_rows": len(candles),
+                "lookbacks": list(args.lookbacks),
+                "expiry_grid": list(args.expiry_grid),
+                "train_fraction": args.train_fraction,
+                "combinations_per_segment": len(args.lookbacks) * len(args.expiry_grid),
+                "segments": ["train", "test"],
+                "sensitivity_file": str(destination),
+                "rows": sensitivity.to_dict(orient="records"),
+                "warning": (
+                    "Descriptive grid comparison only; do not choose a configuration "
+                    "solely because it looks best in the tested sample. Historical results "
+                    "do not establish future profitability or OTC feed parity."
+                ),
+            }, indent=2, default=str))
+            return 0
+
+        signals = sweep_reclaim_signals(candles, lookback=args.lookback)
         if args.walk_forward:
             if args.initial_train_size is None or args.test_size is None:
                 raise ValueError("--walk-forward requires --initial-train-size and --test-size")

@@ -27,6 +27,19 @@ def test_walk_forward_emits_metrics_for_each_future_test_window():
     assert metrics["training_rows"].tolist() == [4, 6, 8]
     assert metrics["test_rows"].tolist() == [2, 2, 2]
     assert (metrics["training_end"] < metrics["test_start"]).all()
+    assert {
+        "candidate_signals",
+        "eligible_candidate_signals",
+        "excluded_due_to_timestamp_gaps",
+        "excluded_due_to_missing_future_bars",
+        "candidate_coverage_ratio",
+    }.issubset(metrics.columns)
+    assert (
+        metrics["eligible_candidate_signals"]
+        + metrics["excluded_due_to_timestamp_gaps"]
+        + metrics["excluded_due_to_missing_future_bars"]
+        == metrics["candidate_signals"]
+    ).all()
     if not trades.empty:
         bounds = metrics.set_index("fold")
         for _, trade in trades.iterrows():

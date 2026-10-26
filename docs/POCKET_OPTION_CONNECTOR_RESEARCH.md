@@ -74,7 +74,23 @@ Solicitar una respuesta por escrito a estas preguntas:
 
 No enviar al soporte ni a terceros contraseñas, cookies, SSID ni tokens de sesión para pedir orientación.
 
-## 6. Criterios de aceptación antes de escribir un adaptador
+## 6. Canal oficial y mensaje de consulta
+
+La web pública de Pocket Option incluye una página de contacto con un formulario para enviar preguntas al equipo de soporte: https://pocketoption.com/es/contacts. El enlace de soporte del área de cuenta puede pedir iniciar sesión. No se ha enviado una consulta desde este proyecto; debe hacerlo el titular de la cuenta usando los canales oficiales.
+
+Texto sugerido para enviar:
+
+> Hola. Estoy investigando una aplicación personal de análisis llamada BPR-02. La aplicación solo recibiría datos de mercado para generar alertas de investigación; no enviaría, modificaría ni cerraría operaciones.
+>
+> ¿Pocket Option ofrece una API, SDK o feed oficial/autorizado de solo lectura para recibir ticks o velas OHLC históricas y/o en tiempo real? Me interesa confirmar si cubre EUR/USD OTC tal como aparece en la terminal, incluyendo timestamps de cierre, zona horaria y precisión de precios.
+>
+> Si existe, ¿podrían compartir la documentación oficial vigente, el procedimiento de autorización y las condiciones aplicables al uso desde una aplicación externa de solo análisis? Si no existe, ¿hay alguna función oficial para exportar velas o datos históricos?
+>
+> No busco automatizar operaciones ni usar endpoints no documentados. Gracias.
+
+Solicitar que la respuesta identifique expresamente si el método está autorizado, no solo si técnicamente funciona. Guardar el texto de la respuesta y la fecha en la documentación del proyecto, sin incluir información personal ni datos de la cuenta.
+
+## 7. Criterios de aceptación antes de escribir un adaptador
 
 No comenzar una conexión específica hasta obtener:
 
@@ -87,7 +103,7 @@ No comenzar una conexión específica hasta obtener:
 - Comparación de las velas importadas con la terminal para medir diferencias observables.
 - Aislamiento estricto de lectura y alertas frente a cualquier capacidad de ejecución.
 
-## 7. Diseño de integración previsto para BPR-02
+## 8. Diseño de integración previsto para BPR-02
 
 Si se aprueba la vía A o B, el adaptador se limitará a:
 

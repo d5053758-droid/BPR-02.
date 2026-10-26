@@ -14,6 +14,8 @@ test = ["pytest>=8,<10"]
 
 [project.scripts]
 bpr02 = "bpr02.cli:main"
+bpr02-stream = "bpr02.signal_bridge:main"
+bpr02-review = "bpr02.review:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

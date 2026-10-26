@@ -6,10 +6,14 @@ from bpr02.signals import CALL, NO_TRADE, PUT
 
 
 def candles(closes, opens=None):
-    opens = opens or closes
+    opens = opens if opens is not None else closes
+    highs = [max(open_price, close_price) + 1.0 for open_price, close_price in zip(opens, closes)]
+    lows = [min(open_price, close_price) - 1.0 for open_price, close_price in zip(opens, closes)]
     return pd.DataFrame({
         "timestamp": pd.date_range("2025-01-01", periods=len(closes), freq="min", tz="UTC"),
         "open": opens,
+        "high": highs,
+        "low": lows,
         "close": closes,
     })
 
@@ -66,3 +70,83 @@ def test_summary_reports_profit_factor_and_equity_drawdown():
     assert stats["profit_factor"] == pytest.approx(0.8)
     assert stats["max_drawdown_in_stake_units"] == pytest.approx(-1.2)
     assert stats["expectancy_per_trade"] == pytest.approx(-0.1)
+
+
+
+def test_backtest_rejects_duplicate_or_unordered_timestamps():
+    data = candles([10, 11, 12])
+    signals = pd.Series([CALL, NO_TRADE, NO_TRADE])
+    duplicate = data.copy()
+    duplicate.loc[2, "timestamp"] = duplicate.loc[1, "timestamp"]
+    with pytest.raises(ValueError, match="unique"):
+        backtest_fixed_expiry(duplicate, signals)
+
+    unordered = data.copy()
+    unordered.loc[0, "timestamp"], unordered.loc[1, "timestamp"] = (
+        unordered.loc[1, "timestamp"], unordered.loc[0, "timestamp"]
+    )
+    with pytest.raises(ValueError, match="chronologically sorted"):
+        backtest_fixed_expiry(unordered, signals)
+
+
+@pytest.mark.parametrize(
+    ("column", "value", "message"),
+    [
+        ("open", float("inf"), "finite"),
+        ("high", float("nan"), "finite"),
+        ("low", "not-a-price", "numeric"),
+    ],
+)
+def test_backtest_rejects_nonfinite_or_nonnumeric_prices(column, value, message):
+    data = candles([10, 11, 12])
+    data.loc[1, column] = value
+    with pytest.raises(ValueError, match=message):
+        backtest_fixed_expiry(data, pd.Series([CALL, NO_TRADE, NO_TRADE]))
+
+
+def test_backtest_rejects_invalid_ohlc_ranges_even_for_direct_callers():
+    data = candles([10, 11, 12])
+    data.loc[1, "high"] = 9.0
+    with pytest.raises(ValueError, match="invalid OHLC"):
+        backtest_fixed_expiry(data, pd.Series([CALL, NO_TRADE, NO_TRADE]))
+
+
+@pytest.mark.parametrize("payout", [float("nan"), float("inf"), -0.01, 1.01, True])
+def test_backtest_rejects_invalid_payout_values(payout):
+    with pytest.raises(ValueError, match="payout"):
+        backtest_fixed_expiry(candles([10, 11]), pd.Series([CALL, NO_TRADE]), payout=payout)
+
+
+@pytest.mark.parametrize("stake", [float("nan"), float("inf"), 0.0, -1.0, True])
+def test_backtest_rejects_invalid_stake_values(stake):
+    with pytest.raises(ValueError, match="stake"):
+        backtest_fixed_expiry(candles([10, 11]), pd.Series([CALL, NO_TRADE]), stake=stake)
+
+
+@pytest.mark.parametrize("expiry_bars", [0, -1, 1.5, True])
+def test_backtest_rejects_noninteger_or_invalid_expiry_values(expiry_bars):
+    with pytest.raises(ValueError, match="expiry_bars"):
+        backtest_fixed_expiry(candles([10, 11]), pd.Series([CALL, NO_TRADE]), expiry_bars=expiry_bars)
+
+
+def test_backtest_rejects_unknown_signal_labels_instead_of_silently_ignoring():
+    with pytest.raises(ValueError, match="unsupported label"):
+        backtest_fixed_expiry(candles([10, 11]), pd.Series(["BUY", NO_TRADE]))
+
+
+def test_backtest_accepts_case_insensitive_valid_signal_labels():
+    results = backtest_fixed_expiry(
+        candles([10, 12], [10, 11]),
+        pd.Series(["call", "no trade"]),
+        payout=0.80,
+    )
+    assert len(results) == 1
+    assert results.iloc[0]["direction"] == CALL
+    assert results.iloc[0]["outcome"] == "WIN"
+
+
+def test_backtest_rejects_missing_timestamps():
+    data = candles([10, 11])
+    data.loc[0, "timestamp"] = pd.NaT
+    with pytest.raises(ValueError, match="must not be missing"):
+        backtest_fixed_expiry(data, pd.Series([CALL, NO_TRADE]))

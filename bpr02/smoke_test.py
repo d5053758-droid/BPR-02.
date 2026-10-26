@@ -194,7 +194,7 @@ def run_smoke_test() -> dict[str, object]:
                     "price": tick_price,
                 },
             }))
-        raw_tick_log.write_text("\\n".join(raw_records) + "\\n", encoding="utf-8")
+        raw_tick_log.write_text("\n".join(raw_records) + "\n", encoding="utf-8")
         converted_quotes_path = root / "converted_otc_quotes.csv"
         conversion = convert_tick_log_to_quotes(
             raw_log_path=raw_tick_log,

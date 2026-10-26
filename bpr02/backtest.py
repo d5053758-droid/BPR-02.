@@ -233,3 +233,65 @@ def summarize_results(results: pd.DataFrame) -> dict[str, float | int | None]:
         "expectancy_per_trade": (total_pnl / total) if total else None,
         "max_drawdown_in_stake_units": max_drawdown,
     }
+
+
+def backtest_coverage_diagnostics(
+    candles: pd.DataFrame,
+    signals: pd.Series | pd.DataFrame,
+    *,
+    expiry_bars: int = 1,
+    expected_interval_seconds: float | None = None,
+) -> dict[str, int | float | None]:
+    """Count directional signals that can and cannot be modeled from this bar series.
+
+    A candidate is eligible only if its entry and settlement bars exist and
+    its signal-to-settlement window remains inside one continuous timestamp
+    segment. This is a data-coverage diagnostic, not a strategy performance
+    metric. It makes exclusions visible instead of silently shrinking the
+    backtest sample.
+    """
+    normalized = _validate_backtest_inputs(
+        candles,
+        signals,
+        expiry_bars=expiry_bars,
+        payout=0.80,
+        stake=1.0,
+        tie_policy="push",
+    )
+    frame = candles.copy().reset_index(drop=True)
+    frame["timestamp"] = pd.to_datetime(frame["timestamp"], errors="raise", utc=True)
+    segments, interval, break_count = continuity_segments(
+        frame, expected_interval_seconds=expected_interval_seconds
+    )
+    segments = segments.reset_index(drop=True)
+
+    candidate_signals = 0
+    eligible_signals = 0
+    missing_future_bars = 0
+    timestamp_gap_exclusions = 0
+    for signal_idx, label in enumerate(normalized):
+        if label not in (CALL, PUT):
+            continue
+        candidate_signals += 1
+        entry_idx = signal_idx + 1
+        expiry_idx = entry_idx + expiry_bars - 1
+        if entry_idx >= len(frame) or expiry_idx >= len(frame):
+            missing_future_bars += 1
+            continue
+        if segments.iloc[signal_idx] != segments.iloc[expiry_idx]:
+            timestamp_gap_exclusions += 1
+            continue
+        eligible_signals += 1
+
+    return {
+        "candidate_signals": candidate_signals,
+        "eligible_candidate_signals": eligible_signals,
+        "excluded_due_to_timestamp_gaps": timestamp_gap_exclusions,
+        "excluded_due_to_missing_future_bars": missing_future_bars,
+        "timestamp_discontinuities": int(break_count),
+        "expected_interval_seconds_used": interval,
+        "candidate_coverage_ratio": (
+            eligible_signals / candidate_signals if candidate_signals else None
+        ),
+        "coverage_ratio_excludes_no_signal_rows": True,
+    }

@@ -1,5 +1,3 @@
-from datetime import timezone
-
 import pandas as pd
 import pytest
 
@@ -114,6 +112,9 @@ def test_cli_writes_report_manifest_and_refuses_overwrite_by_default(tmp_path, c
     assert report_data["output_sha256"]
     assert manifest_data["mode"] == "quality_aware_ohlc_resampling"
     assert manifest_data["source"]["sha256"]
+    assert manifest_data["additional_sources"]["resampled_ohlc_output"]["sha256"]
+    assert manifest_data["additional_sources"]["quality_report_json"]["sha256"]
+    assert manifest_data["dataset"]["rows"] == 2
     assert manifest_data["summary"]["complete_target_bars_written"] == 2
 
     code = main([

@@ -15,6 +15,7 @@ def run_walk_forward(
     test_size: int,
     lookback: int = 12,
     expiry_bars: int = 1,
+    expected_interval_seconds: float | None = None,
     payout: float = 0.80,
     stake: float = 1.0,
     tie_policy: str = "push",
@@ -26,8 +27,10 @@ def run_walk_forward(
     chronological series; each fold's trades are restricted to signals and
     entry/expiry candles inside that fold's test block. The training segment
     establishes historical context only: no model is fitted or tuned here.
-    Returns (trade_results, fold_metrics). This is a validation utility, not
-    evidence of strategy profitability.
+    Returns (trade_results, fold_metrics). Timestamp discontinuities reset
+    signal context and disqualify trades whose modeled candle window crosses
+    a gap. The expected candle interval may be supplied explicitly. This is a
+    validation utility, not evidence of strategy profitability.
     """
     required = {"timestamp", "open", "high", "low", "close"}
     if not required.issubset(candles.columns):
@@ -45,7 +48,10 @@ def run_walk_forward(
         test_size=test_size,
         step_size=step_size,
     )
-    signals = sweep_reclaim_signals(candles, lookback=lookback)
+    signals = sweep_reclaim_signals(
+        candles, lookback=lookback,
+        expected_interval_seconds=expected_interval_seconds,
+    )
     trade_tables: list[pd.DataFrame] = []
     metric_rows: list[dict[str, object]] = []
 
@@ -56,6 +62,7 @@ def run_walk_forward(
             test_candles,
             test_signals,
             expiry_bars=expiry_bars,
+            expected_interval_seconds=expected_interval_seconds,
             payout=payout,
             stake=stake,
             tie_policy=tie_policy,

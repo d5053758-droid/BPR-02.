@@ -109,6 +109,9 @@ def backtest_fixed_expiry(
     settlement is the close of that entry candle. Higher expiry values settle
     at the close of a later candle. Payout is net profit per unit stake on a
     win; loss is -stake. A tie is zero by default or -stake if tie_policy=loss.
+    Any trade whose signal-to-settlement window crosses a timestamp gap is
+    omitted. Expected candle spacing is inferred by default or can be supplied
+    explicitly with expected_interval_seconds.
 
     Direct callers receive the same structural validation as CSV-loaded inputs:
     timestamps must be unique and chronological and every OHLC value finite.

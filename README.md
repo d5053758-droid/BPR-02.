@@ -73,6 +73,8 @@ bpr02-seconds-backtest candles_m1.csv quotes.csv --lookback 12 --bar-seconds 60 
 
 The model waits until the signal candle is complete, selects the first quote at or after the entry target, then selects the first quote at or after the requested expiry time. It records how late each selected quote is. If no quote exists or the selected quote exceeds the configured delay tolerance, the signal is marked as unmodeled rather than inventing an entry or settlement. Review `no_entry_quote`, `stale_entry_quote`, `no_settlement_quote`, and `stale_settlement_quote` before interpreting the results. A smaller delay tolerance rejects more observations; a larger tolerance makes the modeled settlement less precise.
 
+For an expanding, chronological out-of-sample evaluation of the same fixed rule, add `--walk-forward --initial-train-size 5000 --test-size 1000`. Add `--step-size 1000` to make the non-overlapping test windows explicit and `--fold-summary seconds_folds.csv` to choose the per-fold metrics file. The command reports only directional signals from future test windows; the rule is not fitted or optimized within these folds. It records candidate signals for which an entry or settlement quote could not be modeled rather than inventing outcomes.
+
 **Important limitation:** this is a timestamped-quote approximation, not a broker-certified reconstruction of three-second execution or settlement. The data must match the market and price convention being researched. Standard EUR/USD quotes do not establish parity with Pocket Option's EUR/USD OTC feed. No broker is contacted and no orders are placed. A successful test of the code is not evidence of strategy profitability.
 
 ## Run a backtest

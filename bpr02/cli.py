@@ -4,10 +4,12 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 from .audit import audit_csv_file
 from .backtest import backtest_fixed_expiry, summarize_results
 from .data import load_ohlc_csv
+from .provenance import build_run_manifest, write_run_manifest
 from .sensitivity import run_sensitivity_analysis
 from .signals import CALL, PUT, sweep_reclaim_signals
 from .walkforward import run_walk_forward
@@ -23,6 +25,58 @@ def _parse_int_list(value: str) -> tuple[int, ...]:
     return parsed
 
 
+def _validate_manifest_path(args: argparse.Namespace) -> None:
+    """Prevent the manifest from overwriting input data or any active result file."""
+    protected = [Path(args.csv)]
+    if args.audit_data:
+        protected.append(Path(args.audit_output))
+    elif args.sensitivity:
+        protected.append(Path(args.sensitivity_output))
+    else:
+        protected.append(Path(args.output))
+        if args.walk_forward:
+            protected.append(Path(args.fold_summary))
+    target = Path(args.manifest_output).resolve()
+    if target in {path.resolve() for path in protected}:
+        raise ValueError("--manifest-output must differ from the input and all run output paths")
+
+
+def _iso_timestamp(value: Any) -> str | None:
+    if value is None:
+        return None
+    if hasattr(value, "isoformat") and callable(value.isoformat):
+        return str(value.isoformat())
+    return str(value)
+
+
+def _save_manifest(
+    *,
+    args: argparse.Namespace,
+    mode: str,
+    parameters: dict[str, Any],
+    outputs: dict[str, str],
+    rows: int | None,
+    start_timestamp: str | None,
+    end_timestamp: str | None,
+    summary: dict[str, Any],
+    notes: tuple[str, ...] = (),
+) -> str:
+    manifest = build_run_manifest(
+        source_path=args.csv,
+        mode=mode,
+        parameters=parameters,
+        outputs=outputs,
+        rows=rows,
+        start_timestamp=start_timestamp,
+        end_timestamp=end_timestamp,
+        summary=summary,
+        notes=notes,
+    )
+    destination = Path(args.manifest_output)
+    write_run_manifest(destination, manifest, source_path=args.csv)
+    return str(destination)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="bpr02",
@@ -30,6 +84,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("csv", help="Path to historical OHLC CSV")
     parser.add_argument("--output", default="bpr02_results.csv", help="Path for trade results CSV")
+    parser.add_argument(
+        "--manifest-output",
+        default="bpr02_run_manifest.json",
+        help="Path for reproducibility manifest JSON (SHA-256 data fingerprint, parameters and outputs)",
+    )
     parser.add_argument("--lookback", type=int, default=12, help="Prior candles for sweep/reclaim (>=2)")
     parser.add_argument("--expiry-bars", type=int, default=1, help="Candles from entry to expiry (>=1)")
     parser.add_argument("--payout", type=float, default=0.80, help="Net win payout per unit stake (0..1)")
@@ -57,6 +116,8 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
+        _validate_manifest_path(args)
+
         if args.audit_data:
             report = audit_csv_file(
                 args.csv,
@@ -65,14 +126,39 @@ def main(argv: list[str] | None = None) -> int:
             destination = Path(args.audit_output)
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
+            manifest_file = _save_manifest(
+                args=args,
+                mode="data_audit",
+                parameters={"expected_interval_seconds": args.expected_interval_seconds},
+                outputs={"audit_report": str(destination)},
+                rows=int(report.get("rows", 0)),
+                start_timestamp=report.get("start_timestamp"),
+                end_timestamp=report.get("end_timestamp"),
+                summary={
+                    "structurally_valid": report.get("structurally_valid"),
+                    "timestamp_parse_errors": report.get("timestamp_parse_errors"),
+                    "duplicate_timestamps": report.get("duplicate_timestamps"),
+                    "out_of_order_steps": report.get("out_of_order_steps"),
+                    "invalid_ohlc_rows": report.get("invalid_ohlc_rows"),
+                    "warnings": report.get("warnings", []),
+                    "issues": report.get("issues", []),
+                },
+                notes=(
+                    "Data-quality audit only; no strategy was run.",
+                    "Timestamp gaps are estimates and do not verify parity with Pocket Option OTC.",
+                ),
+            )
             print(json.dumps({
                 "mode": "data_audit",
                 "audit_file": str(destination),
+                "manifest_file": manifest_file,
                 **report,
             }, indent=2, default=str))
             return 0 if report["structurally_valid"] else 2
 
         candles = load_ohlc_csv(args.csv)
+        start_timestamp = _iso_timestamp(candles["timestamp"].iloc[0])
+        end_timestamp = _iso_timestamp(candles["timestamp"].iloc[-1])
 
         if args.sensitivity:
             sensitivity = run_sensitivity_analysis(
@@ -87,6 +173,32 @@ def main(argv: list[str] | None = None) -> int:
             destination = Path(args.sensitivity_output)
             destination.parent.mkdir(parents=True, exist_ok=True)
             sensitivity.to_csv(destination, index=False)
+            manifest_file = _save_manifest(
+                args=args,
+                mode="sensitivity_research_only",
+                parameters={
+                    "lookbacks": list(args.lookbacks),
+                    "expiry_grid": list(args.expiry_grid),
+                    "train_fraction": args.train_fraction,
+                    "payout": args.payout,
+                    "stake": args.stake,
+                    "tie_policy": args.tie_policy,
+                },
+                outputs={"sensitivity_csv": str(destination)},
+                rows=len(candles),
+                start_timestamp=start_timestamp,
+                end_timestamp=end_timestamp,
+                summary={
+                    "grid_rows": len(sensitivity),
+                    "combinations_per_segment": len(args.lookbacks) * len(args.expiry_grid),
+                    "segments": ["train", "test"],
+                },
+                notes=(
+                    "Grid comparison is descriptive and does not select a winning configuration.",
+                    "Repeatedly tuning on a holdout set can overfit it.",
+                    "Historical results do not establish future profitability or OTC feed parity.",
+                ),
+            )
             print(json.dumps({
                 "mode": "sensitivity_research_only",
                 "source_rows": len(candles),
@@ -96,6 +208,7 @@ def main(argv: list[str] | None = None) -> int:
                 "combinations_per_segment": len(args.lookbacks) * len(args.expiry_grid),
                 "segments": ["train", "test"],
                 "sensitivity_file": str(destination),
+                "manifest_file": manifest_file,
                 "rows": sensitivity.to_dict(orient="records"),
                 "warning": (
                     "Descriptive grid comparison only; do not choose a configuration "
@@ -106,6 +219,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         signals = sweep_reclaim_signals(candles, lookback=args.lookback)
+        stats = {}
         if args.walk_forward:
             if args.initial_train_size is None or args.test_size is None:
                 raise ValueError("--walk-forward requires --initial-train-size and --test-size")
@@ -129,6 +243,17 @@ def main(argv: list[str] | None = None) -> int:
                 "fold_metrics": fold_metrics.to_dict(orient="records"),
             }
             mode = "walk_forward_research_only"
+            outputs = {"trade_results_csv": str(args.output), "fold_summary_csv": str(fold_summary_path)}
+            parameters = {
+                "lookback": args.lookback,
+                "expiry_bars": args.expiry_bars,
+                "payout": args.payout,
+                "stake": args.stake,
+                "tie_policy": args.tie_policy,
+                "initial_train_size": args.initial_train_size,
+                "test_size": args.test_size,
+                "step_size": args.step_size,
+            }
         else:
             trades = backtest_fixed_expiry(
                 candles,
@@ -140,16 +265,44 @@ def main(argv: list[str] | None = None) -> int:
             )
             extra_summary = {}
             mode = "research_only"
+            outputs = {"trade_results_csv": str(args.output)}
+            parameters = {
+                "lookback": args.lookback,
+                "expiry_bars": args.expiry_bars,
+                "payout": args.payout,
+                "stake": args.stake,
+                "tie_policy": args.tie_policy,
+            }
 
         destination = Path(args.output)
         destination.parent.mkdir(parents=True, exist_ok=True)
         trades.to_csv(destination, index=False)
+        stats = summarize_results(trades)
+        manifest_file = _save_manifest(
+            args=args,
+            mode=mode,
+            parameters=parameters,
+            outputs=outputs,
+            rows=len(candles),
+            start_timestamp=start_timestamp,
+            end_timestamp=end_timestamp,
+            summary={
+                "candidate_signals": int(signals["signal"].isin([CALL, PUT]).sum()),
+                **stats,
+                **({"folds": len(fold_metrics)} if args.walk_forward else {}),
+            },
+            notes=(
+                "Historical simulation is not a guarantee of future results.",
+                "The CSV feed and settlement assumptions may differ from Pocket Option OTC.",
+            ),
+        )
         print(json.dumps({
             "mode": mode,
             "source_rows": len(candles),
             "candidate_signals": int(signals["signal"].isin([CALL, PUT]).sum()),
             "results_file": str(destination),
-            **summarize_results(trades),
+            "manifest_file": manifest_file,
+            **stats,
             **extra_summary,
             "warning": (
                 "Historical simulation is not a guarantee of future results. "

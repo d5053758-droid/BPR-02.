@@ -169,3 +169,28 @@ def test_bar_backtest_omits_trades_that_cross_missing_candle_intervals():
 
     two_bars = backtest_fixed_expiry(data, signals, expiry_bars=2)
     assert two_bars.empty
+
+
+def test_backtest_coverage_diagnostics_counts_timestamp_and_future_exclusions():
+    from bpr02.backtest import backtest_coverage_diagnostics
+
+    data = candles([10, 11, 12], [10, 10, 11])
+    data["timestamp"] = pd.to_datetime([
+        "2025-01-01T00:00:00Z",
+        "2025-01-01T00:01:00Z",
+        "2025-01-01T00:03:00Z",
+    ])
+    signals = pd.Series([CALL, CALL, NO_TRADE])
+
+    diagnostics = backtest_coverage_diagnostics(data, signals, expiry_bars=1)
+    assert diagnostics["candidate_signals"] == 2
+    assert diagnostics["eligible_candidate_signals"] == 1
+    assert diagnostics["excluded_due_to_timestamp_gaps"] == 1
+    assert diagnostics["excluded_due_to_missing_future_bars"] == 0
+    assert diagnostics["timestamp_discontinuities"] == 1
+    assert diagnostics["candidate_coverage_ratio"] == pytest.approx(0.5)
+
+    longer_expiry = backtest_coverage_diagnostics(data, signals, expiry_bars=2)
+    assert longer_expiry["eligible_candidate_signals"] == 0
+    assert longer_expiry["excluded_due_to_timestamp_gaps"] == 1
+    assert longer_expiry["excluded_due_to_missing_future_bars"] == 1

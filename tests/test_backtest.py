@@ -99,6 +99,7 @@ def test_backtest_rejects_duplicate_or_unordered_timestamps():
 )
 def test_backtest_rejects_nonfinite_or_nonnumeric_prices(column, value, message):
     data = candles([10, 11, 12])
+    data[column] = data[column].astype(object)
     data.loc[1, column] = value
     with pytest.raises(ValueError, match=message):
         backtest_fixed_expiry(data, pd.Series([CALL, NO_TRADE, NO_TRADE]))

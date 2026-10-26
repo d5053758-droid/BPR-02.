@@ -32,6 +32,7 @@ def test_record_live_ticks_uses_bearer_header_and_never_writes_the_key(tmp_path)
         ("tick", _tick(symbol="GBPUSD_otc", price=1.27001)),
         ("tick", _tick(epoch=1788103261, price=1.10002)),
     )
+    sse = sse.replace(b"event: tick", b": keep-alive\\n\\nevent: tick", 1)
     observed = {}
 
     def fake_urlopen(request, timeout):
@@ -56,13 +57,14 @@ def test_record_live_ticks_uses_bearer_header_and_never_writes_the_key(tmp_path)
     assert observed["accept"] == "text/event-stream"
     assert observed["timeout"] == 60
     assert "secret-test-key" not in raw
-    assert result["events_recorded"] == 3
+    assert result["events_recorded"] == 4
     assert result["tick_events_recorded"] == 2
     assert result["ticks_skipped_for_unrequested_symbols"] == 1
     assert result["orders_submitted"] == 0
-    assert len(records) == 3
-    assert records[1]["payload"]["price"] == pytest.approx(1.10001)
-    assert records[1]["source_time_epoch_seconds"] == 1788103260
+    assert len(records) == 4
+    assert records[1]["event"] == "heartbeat"
+    assert records[2]["payload"]["price"] == pytest.approx(1.10001)
+    assert records[2]["source_time_epoch_seconds"] == 1788103260
 
 
 def test_record_live_ticks_requires_key_and_refuses_overwrite_before_network(tmp_path):

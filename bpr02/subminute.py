@@ -636,6 +636,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--entry-delay-seconds", type=float, default=0.0)
     parser.add_argument("--max-quote-delay-seconds", type=float, default=1.0)
     parser.add_argument(
+        "--max-quote-p95-gap-seconds",
+        type=float,
+        help="Optional hard gate for p95 spacing between quote observations; exits 3 if exceeded or not measurable",
+    )
+    parser.add_argument(
         "--min-model-coverage",
         type=float,
         default=0.95,
@@ -709,6 +714,11 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError("--quote-source-label must be a non-empty descriptive label")
         if not math.isfinite(args.min_model_coverage) or not 0 <= args.min_model_coverage <= 1:
             raise ValueError("--min-model-coverage must be between 0 and 1")
+        if args.max_quote_p95_gap_seconds is not None and (
+            not math.isfinite(args.max_quote_p95_gap_seconds)
+            or args.max_quote_p95_gap_seconds < 0
+        ):
+            raise ValueError("--max-quote-p95-gap-seconds must be finite and >= 0")
         if args.walk_forward and (
             args.initial_train_size is None or args.test_size is None
         ):
@@ -726,6 +736,7 @@ def main(argv: list[str] | None = None) -> int:
             "expiry_seconds": args.expiry_seconds,
             "entry_delay_seconds": args.entry_delay_seconds,
             "max_quote_delay_seconds": args.max_quote_delay_seconds,
+            "max_quote_p95_gap_seconds": args.max_quote_p95_gap_seconds,
             "payout": args.payout,
             "stake": args.stake,
             "tie_policy": args.tie_policy,
@@ -823,9 +834,26 @@ def main(argv: list[str] | None = None) -> int:
             and model_coverage is not None
             and float(model_coverage) >= args.min_model_coverage
         )
+        p95_gap = diagnostics.get("quote_gap_p95_seconds")
+        quote_resolution_gate_enforced = args.max_quote_p95_gap_seconds is not None
+        quote_resolution_gate_passed = (
+            not quote_resolution_gate_enforced
+            or (
+                p95_gap is not None
+                and float(p95_gap) <= float(args.max_quote_p95_gap_seconds)
+            )
+        )
+        all_quality_gates_passed = (
+            model_coverage_gate_passed and quote_resolution_gate_passed
+        )
         manifest["parameters"]["min_model_coverage"] = args.min_model_coverage
+        manifest["parameters"]["max_quote_p95_gap_seconds"] = args.max_quote_p95_gap_seconds
         manifest["summary"]["model_coverage_gate_passed"] = model_coverage_gate_passed
         manifest["summary"]["minimum_model_coverage"] = args.min_model_coverage
+        manifest["summary"]["quote_resolution_gate_enforced"] = quote_resolution_gate_enforced
+        manifest["summary"]["quote_resolution_gate_passed"] = quote_resolution_gate_passed
+        manifest["summary"]["max_quote_p95_gap_seconds"] = args.max_quote_p95_gap_seconds
+        manifest["summary"]["all_quality_gates_passed"] = all_quality_gates_passed
         write_run_manifest(manifest_path, manifest, source_path=candles_path)
         result = {
             "mode": mode,
@@ -836,13 +864,20 @@ def main(argv: list[str] | None = None) -> int:
             **extra_result,
             "model_coverage_gate_passed": model_coverage_gate_passed,
             "minimum_model_coverage": args.min_model_coverage,
+            "quote_resolution_gate_enforced": quote_resolution_gate_enforced,
+            "quote_resolution_gate_passed": quote_resolution_gate_passed,
+            "max_quote_p95_gap_seconds": args.max_quote_p95_gap_seconds,
+            "all_quality_gates_passed": all_quality_gates_passed,
             "orders_submitted": 0,
             "warning": (
                 "Second-expiry results require quotes from the intended market and price convention; "
                 "external EUR/USD data may not match Pocket Option OTC."
-            ) if model_coverage_gate_passed else (
+            ) if all_quality_gates_passed else (
                 "MODEL COVERAGE GATE FAILED: too few candidate signals had usable entry and settlement quotes. "
                 "Treat win rate and P/L as incomplete; inspect unmodeled signals and quote gaps."
+                if not model_coverage_gate_passed else
+                "QUOTE RESOLUTION GATE FAILED: the quote p95 interval exceeded the configured limit or could not be measured. "
+                "Treat three-second results as insufficiently resolved until higher-quality timestamps are available."
             ),
         }
         print(json.dumps(result, indent=2, ensure_ascii=False, default=str))
@@ -852,6 +887,13 @@ def main(argv: list[str] | None = None) -> int:
                 f"minimum required is {args.min_model_coverage:.3f}",
                 file=sys.stderr,
             )
+        if not quote_resolution_gate_passed:
+            print(
+                f"QUOTE RESOLUTION THRESHOLD NOT MET: p95 gap {p95_gap!r}s; "
+                f"maximum configured is {args.max_quote_p95_gap_seconds!r}s",
+                file=sys.stderr,
+            )
+        if not all_quality_gates_passed:
             return 3
     except (OSError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

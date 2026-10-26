@@ -74,3 +74,35 @@ def test_history_initializes_bridge_without_emitting_historical_alerts():
     assert event["timestamp"] == "2025-01-01T00:03:00+00:00"
     with pytest.raises(ValueError, match="chronologically sorted"):
         SignalBridge(lookback=2, history=history.iloc[::-1])
+
+def test_bridge_locks_stream_identity_and_keeps_labels_consistent_when_omitted():
+    bridge = SignalBridge(lookback=2, symbol="UNKNOWN", timeframe="UNKNOWN", source="default")
+    first = bridge.process(payload(
+        "2025-01-01T00:00:00Z", 1, 2, 0, 1,
+        symbol="EURUSD_OTC", timeframe="M1", source="provider_a",
+    ))
+    second = bridge.process(payload("2025-01-01T00:01:00Z", 1, 2, 0, 1))
+    assert first["symbol"] == second["symbol"] == "EURUSD_OTC"
+    assert first["timeframe"] == second["timeframe"] == "M1"
+    assert first["source"] == second["source"] == "provider_a"
+
+
+@pytest.mark.parametrize(
+    ("field", "changed_value"),
+    [
+        ("symbol", "GBPUSD"),
+        ("timeframe", "M5"),
+        ("source", "different_provider"),
+    ],
+)
+def test_bridge_rejects_changes_to_stream_identity(field, changed_value):
+    bridge = SignalBridge(lookback=2)
+    base = {"symbol": "EURUSD", "timeframe": "M1", "source": "provider_a"}
+    bridge.process(payload("2025-01-01T00:00:00Z", 1, 2, 0, 1, **base))
+    changed = dict(base)
+    changed[field] = changed_value
+    with pytest.raises(ValueError, match=f"{field} changed within one stream"):
+        bridge.process(payload("2025-01-01T00:01:00Z", 1, 2, 0, 1, **changed))
+    # The rejected candle must not advance the stream; a matching next candle works.
+    event = bridge.process(payload("2025-01-01T00:01:00Z", 1, 2, 0, 1, **base))
+    assert event["symbol"] == "EURUSD"

@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .audit import audit_csv_file
-from .backtest import backtest_fixed_expiry, summarize_results
+from .backtest import backtest_coverage_diagnostics, backtest_fixed_expiry, summarize_results
 from .data import load_ohlc_csv
 from .provenance import build_run_manifest, write_run_manifest
 from .sensitivity import run_sensitivity_analysis
@@ -252,6 +252,21 @@ def main(argv: list[str] | None = None) -> int:
                 "fold_summary_file": str(fold_summary_path),
                 "fold_metrics": fold_metrics.to_dict(orient="records"),
             }
+            coverage_columns = (
+                "candidate_signals",
+                "eligible_candidate_signals",
+                "excluded_due_to_timestamp_gaps",
+                "excluded_due_to_missing_future_bars",
+            )
+            coverage_summary: dict[str, Any] = {
+                key: int(fold_metrics[key].sum()) for key in coverage_columns
+            }
+            total_candidates = coverage_summary["candidate_signals"]
+            coverage_summary["candidate_coverage_ratio"] = (
+                coverage_summary["eligible_candidate_signals"] / total_candidates
+                if total_candidates else None
+            )
+            coverage_summary["coverage_basis"] = "out_of_sample_test_folds_only"
             mode = "walk_forward_research_only"
             outputs = {"trade_results_csv": str(args.output), "fold_summary_csv": str(fold_summary_path)}
             parameters = {
@@ -275,6 +290,13 @@ def main(argv: list[str] | None = None) -> int:
                 stake=args.stake,
                 tie_policy=args.tie_policy,
             )
+            coverage_summary = backtest_coverage_diagnostics(
+                candles,
+                signals,
+                expiry_bars=args.expiry_bars,
+                expected_interval_seconds=args.expected_interval_seconds,
+            )
+            coverage_summary["coverage_basis"] = "full_input_series"
             extra_summary = {}
             mode = "research_only"
             outputs = {"trade_results_csv": str(args.output)}
@@ -300,7 +322,7 @@ def main(argv: list[str] | None = None) -> int:
             start_timestamp=start_timestamp,
             end_timestamp=end_timestamp,
             summary={
-                "candidate_signals": int(signals["signal"].isin([CALL, PUT]).sum()),
+                **coverage_summary,
                 **stats,
                 **({"folds": len(fold_metrics)} if args.walk_forward else {}),
             },
@@ -312,7 +334,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({
             "mode": mode,
             "source_rows": len(candles),
-            "candidate_signals": int(signals["signal"].isin([CALL, PUT]).sum()),
+            **coverage_summary,
             "results_file": str(destination),
             "manifest_file": manifest_file,
             **stats,

@@ -598,6 +598,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--expiry-seconds", type=float, default=3.0)
     parser.add_argument("--entry-delay-seconds", type=float, default=0.0)
     parser.add_argument("--max-quote-delay-seconds", type=float, default=1.0)
+    parser.add_argument(
+        "--min-model-coverage",
+        type=float,
+        default=0.95,
+        help="Minimum share of candidate signals with modeled entry and settlement quotes; exits 3 if unmet",
+    )
     parser.add_argument("--payout", type=float, default=0.80)
     parser.add_argument("--stake", type=float, default=1.0)
     parser.add_argument("--tie-policy", choices=("push", "loss"), default="push")
@@ -664,6 +670,8 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError("--lookback must be >= 2")
         if not isinstance(args.quote_source_label, str) or not args.quote_source_label.strip():
             raise ValueError("--quote-source-label must be a non-empty descriptive label")
+        if not math.isfinite(args.min_model_coverage) or not 0 <= args.min_model_coverage <= 1:
+            raise ValueError("--min-model-coverage must be between 0 and 1")
         if args.walk_forward and (
             args.initial_train_size is None or args.test_size is None
         ):
@@ -685,6 +693,7 @@ def main(argv: list[str] | None = None) -> int:
             "stake": args.stake,
             "tie_policy": args.tie_policy,
             "quote_source_label": args.quote_source_label,
+            "min_model_coverage": args.min_model_coverage,
         }
 
         if args.walk_forward:
@@ -770,6 +779,16 @@ def main(argv: list[str] | None = None) -> int:
             summary={**diagnostics, **stats},
             notes=manifest_notes,
         )
+        model_coverage = diagnostics.get("modeled_signal_fraction")
+        candidate_count = int(diagnostics.get("candidate_signals", 0))
+        model_coverage_gate_passed = (
+            candidate_count > 0
+            and model_coverage is not None
+            and float(model_coverage) >= args.min_model_coverage
+        )
+        manifest["parameters"]["min_model_coverage"] = args.min_model_coverage
+        manifest["summary"]["model_coverage_gate_passed"] = model_coverage_gate_passed
+        manifest["summary"]["minimum_model_coverage"] = args.min_model_coverage
         write_run_manifest(manifest_path, manifest, source_path=candles_path)
         result = {
             "mode": mode,
@@ -778,13 +797,25 @@ def main(argv: list[str] | None = None) -> int:
             **diagnostics,
             **stats,
             **extra_result,
+            "model_coverage_gate_passed": model_coverage_gate_passed,
+            "minimum_model_coverage": args.min_model_coverage,
             "orders_submitted": 0,
             "warning": (
                 "Second-expiry results require quotes from the intended market and price convention; "
                 "external EUR/USD data may not match Pocket Option OTC."
+            ) if model_coverage_gate_passed else (
+                "MODEL COVERAGE GATE FAILED: too few candidate signals had usable entry and settlement quotes. "
+                "Treat win rate and P/L as incomplete; inspect unmodeled signals and quote gaps."
             ),
         }
         print(json.dumps(result, indent=2, ensure_ascii=False, default=str))
+        if not model_coverage_gate_passed:
+            print(
+                f"MODEL COVERAGE THRESHOLD NOT MET: modeled {model_coverage!r} of candidate signals; "
+                f"minimum required is {args.min_model_coverage:.3f}",
+                file=sys.stderr,
+            )
+            return 3
     except (OSError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2

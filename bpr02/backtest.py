@@ -104,19 +104,41 @@ def summarize_results(results: pd.DataFrame) -> dict[str, float | int | None]:
     """Calculate descriptive metrics without implying future profitability."""
     if not {"outcome", "pnl"}.issubset(results.columns):
         raise ValueError("results must contain 'outcome' and 'pnl' columns")
+
     total = int(len(results))
     wins = int((results["outcome"] == "WIN").sum())
     losses = int((results["outcome"] == "LOSS").sum())
     ties = int((results["outcome"] == "TIE").sum())
     settled = wins + losses
-    pnl = pd.to_numeric(results["pnl"], errors="coerce")
+    pnl = pd.to_numeric(results["pnl"], errors="coerce").fillna(0.0)
     total_pnl = float(pnl.sum()) if total else 0.0
+    gross_profit = float(pnl[pnl > 0].sum())
+    gross_loss = float(-pnl[pnl < 0].sum())
+    profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else None
+
+    # Include the initial zero-equity point so first-trade losses count as drawdown.
+    equity = pd.concat(
+        [pd.Series([0.0]), pnl.reset_index(drop=True).cumsum()],
+        ignore_index=True,
+    )
+    max_drawdown = float((equity - equity.cummax()).min()) if total else 0.0
+
+    break_even_rate: float | None = None
+    if "payout" in results.columns and total:
+        payout_values = pd.to_numeric(results["payout"], errors="coerce").dropna()
+        if not payout_values.empty and payout_values.mean() >= 0:
+            # Theoretical non-tie break-even rate for the average modeled payout.
+            break_even_rate = float(1.0 / (1.0 + payout_values.mean()))
+
     return {
         "trades": total,
         "wins": wins,
         "losses": losses,
         "ties": ties,
         "win_rate_excluding_ties": (wins / settled) if settled else None,
+        "break_even_win_rate_excluding_ties": break_even_rate,
+        "profit_factor": profit_factor,
         "net_pnl_in_stake_units": total_pnl,
         "expectancy_per_trade": (total_pnl / total) if total else None,
+        "max_drawdown_in_stake_units": max_drawdown,
     }

@@ -172,6 +172,9 @@ def fetch_historical_candles(
         raise ValueError(
             f"OTCharts returned symbol {payload['symbol']!r}, not requested symbol {symbol!r}"
         )
+    instrument_open = payload.get("open")
+    if instrument_open is not None and not isinstance(instrument_open, bool):
+        raise ValueError("OTCharts candle response field 'open' must be boolean when provided")
 
     candles_by_epoch: dict[int, dict[str, float]] = {}
     reordered_rows = 0
@@ -253,6 +256,19 @@ def fetch_historical_candles(
         "output_candles": len(ordered),
         "provider_count": payload.get("count"),
         "provider_gaps": payload.get("gaps"),
+        "instrument_open": instrument_open,
+        "instrument_status": (
+            "open" if instrument_open is True
+            else "closed" if instrument_open is False
+            else "not_reported"
+        ),
+        "instrument_status_note": (
+            "The provider currently reports this instrument as open."
+            if instrument_open is True
+            else "The provider currently reports this instrument as closed for trading; historical candles can still exist."
+            if instrument_open is False
+            else "The provider did not report current instrument status in this response."
+        ),
         "rows_reordered_to_chronology": reordered_rows,
         "source_clock_ahead_seconds_subtracted": source_clock_ahead_seconds,
         "start_timestamp_utc": datetime.fromtimestamp(first_epoch, tz=timezone.utc).isoformat(),

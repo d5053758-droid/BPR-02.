@@ -117,8 +117,63 @@ def test_quote_audit_cli_threshold_returns_three_without_deleting_report(tmp_pat
     assert code == 3
     assert "QUALITY THRESHOLD NOT MET" in captured.err
     assert output.is_file()
-    assert json.loads(output.read_text(encoding="utf-8"))["p95_gap_seconds"] == pytest.approx(2.0)
+    saved = json.loads(output.read_text(encoding="utf-8"))
+    assert saved["p95_gap_seconds"] == pytest.approx(2.0)
+    assert saved["max_p95_gap_seconds"] == pytest.approx(1.0)
+    assert saved["quality_threshold_enforced"] is True
+    assert saved["quality_threshold_passed"] is False
+    assert saved["all_quality_gates_passed"] is False
 
+
+
+def test_quote_audit_cli_records_explicit_threshold_pass(tmp_path, capsys):
+    source = tmp_path / "quotes.csv"
+    output = tmp_path / "audit.json"
+    quote_frame().to_csv(source, index=False)
+    code = main([
+        str(source),
+        "--max-p95-gap-seconds", "0.75",
+        "--output", str(output),
+    ])
+    capsys.readouterr()
+    saved = json.loads(output.read_text(encoding="utf-8"))
+    assert code == 0
+    assert saved["quality_threshold_enforced"] is True
+    assert saved["quality_threshold_passed"] is True
+    assert saved["all_quality_gates_passed"] is True
+
+
+def test_quote_audit_cli_fails_explicit_threshold_when_p95_is_unmeasurable(tmp_path, capsys):
+    source = tmp_path / "single_quote.csv"
+    output = tmp_path / "audit.json"
+    quote_frame(count=1).to_csv(source, index=False)
+    code = main([
+        str(source),
+        "--max-p95-gap-seconds", "0.75",
+        "--output", str(output),
+    ])
+    captured = capsys.readouterr()
+    saved = json.loads(output.read_text(encoding="utf-8"))
+    assert code == 3
+    assert "p95 gap could not be measured" in captured.err
+    assert saved["p95_gap_seconds"] is None
+    assert saved["quality_threshold_enforced"] is True
+    assert saved["quality_threshold_passed"] is False
+    assert saved["all_quality_gates_passed"] is False
+
+
+def test_quote_audit_cli_marks_unconfigured_threshold_as_unenforced(tmp_path, capsys):
+    source = tmp_path / "quotes.csv"
+    output = tmp_path / "audit.json"
+    quote_frame().to_csv(source, index=False)
+    code = main([str(source), "--output", str(output)])
+    capsys.readouterr()
+    saved = json.loads(output.read_text(encoding="utf-8"))
+    assert code == 0
+    assert saved["max_p95_gap_seconds"] is None
+    assert saved["quality_threshold_enforced"] is False
+    assert saved["quality_threshold_passed"] is None
+    assert saved["all_quality_gates_passed"] is True
 
 def test_quote_audit_cli_refuses_to_overwrite_source(tmp_path, capsys):
     source = tmp_path / "quotes.csv"

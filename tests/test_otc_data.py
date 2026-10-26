@@ -180,3 +180,57 @@ def test_otc_data_cli_fails_closed_when_api_key_missing(tmp_path, monkeypatch, c
     assert code == 2
     assert "OTCHARTS_API_KEY" in captured.err
     assert not output.exists()
+
+
+
+def test_converter_uses_recorded_clock_offset_and_rejects_mismatch(tmp_path):
+    raw_path = tmp_path / "captured.jsonl"
+    automatic_output = tmp_path / "auto.csv"
+    mismatch_output = tmp_path / "mismatch.csv"
+    record = {
+        "event": "tick",
+        "source_clock_ahead_seconds_configured": 0,
+        "source_time_epoch_seconds": 1788103260,
+        "payload": _tick(epoch=1788103260, price=1.12),
+    }
+    raw_path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+
+    result = convert_tick_log_to_quotes(
+        raw_log_path=raw_path,
+        output_path=automatic_output,
+        source_clock_ahead_seconds=None,
+    )
+    with automatic_output.open(encoding="utf-8", newline="") as handle:
+        rows = list(csv.DictReader(handle))
+    expected_timestamp = datetime.fromtimestamp(1788103260, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+    assert rows[0]["timestamp"] == expected_timestamp
+    assert result["source_clock_ahead_seconds_subtracted"] == 0
+
+    with pytest.raises(ValueError, match="does not match"):
+        convert_tick_log_to_quotes(
+            raw_log_path=raw_path,
+            output_path=mismatch_output,
+            source_clock_ahead_seconds=7200,
+        )
+    assert not mismatch_output.exists()
+
+
+def test_converter_rejects_mixed_clock_offsets_in_appended_raw_log(tmp_path):
+    raw_path = tmp_path / "mixed.jsonl"
+    output_path = tmp_path / "quotes.csv"
+    first = {
+        "event": "tick",
+        "source_clock_ahead_seconds_configured": 7200,
+        "source_time_epoch_seconds": 1788103260,
+        "payload": _tick(epoch=1788103260, price=1.1),
+    }
+    second = {
+        "event": "tick",
+        "source_clock_ahead_seconds_configured": 0,
+        "source_time_epoch_seconds": 1788103261,
+        "payload": _tick(epoch=1788103261, price=1.2),
+    }
+    raw_path.write_text(json.dumps(first) + "\n" + json.dumps(second) + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="different clock-offset settings"):
+        convert_tick_log_to_quotes(raw_log_path=raw_path, output_path=output_path)
+    assert not output_path.exists()

@@ -121,7 +121,7 @@ def test_cli_writes_report_manifest_and_refuses_overwrite_by_default(tmp_path, c
         "--report-output", str(report), "--manifest-output", str(manifest),
     ])
     assert code == 2
-    assert "refusing to overwrite" in capsys.readouterr().err
+    assert "output already exists" in capsys.readouterr().err
 
 
 def test_timestamped_signal_window_resets_after_gap():

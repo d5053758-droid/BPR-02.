@@ -1,6 +1,6 @@
 # BPR-02 — research-only fixed-time backtesting
 
-BPR-02 is a Python research scaffold for testing directional CALL/PUT hypotheses on historical OHLC candles. It does **not** connect to Pocket Option, place orders, request credentials, or guarantee profitability.
+BPR-02 is a Python research scaffold for testing directional CALL/PUT hypotheses on historical OHLC candles. It does **not** connect to a Pocket Option trading account or place orders. An optional, read-only third-party data adapter can read its own API key from a local environment variable; it never needs a Pocket Option login or session token. Nothing guarantees profitability.
 
 ## Current experimental pipeline
 
@@ -69,6 +69,42 @@ bpr02-quote-audit quotes.csv --expiry-seconds 3 --target-resolution-fraction 0.2
 The report records the source file's SHA-256 hash, observation count and time span, median/p95/maximum quote interval, and how often gaps exceed the configured threshold. The default target p95 interval is one quarter of the requested expiry; this is a **configurable screening heuristic**, not a universal standard. To enforce an explicit local threshold, add `--max-p95-gap-seconds 0.25`; the command saves the report and exits with status 3 if that threshold is exceeded.
 
 This audit checks temporal resolution only. It does not prove the quotes came from the intended provider, match Pocket Option OTC, include the platform's settlement price, or support a profitable strategy. For three-second research, a dataset that fails the chosen resolution threshold should not be treated as conclusive evidence about outcomes.
+
+## Optional read-only OTC quote capture
+
+BPR-02 includes an optional adapter for the **third-party OTCharts market-data API**. It is not a Pocket Option official API and it cannot place orders. The provider documents a read-only stream of OTC ticks, including `EURUSD_otc`, but streaming access may require a plan that includes live streams; check the provider's current access and terms before using it. Do not buy a plan just to run a test: first verify that your existing access actually permits streaming.
+
+Set the provider's own API key in your local shell. Never paste it into chat, commit it to GitHub, or write it into a file:
+
+```bash
+export OTCHARTS_API_KEY='YOUR_OTCHARTS_KEY'
+bpr02-otc-data record --symbols EURUSD_otc --duration-seconds 1800 --output otc_ticks_raw.jsonl
+```
+
+This records raw server-sent events to JSON Lines and does not log the key. By default it refuses to overwrite an existing capture; use `--append` only when adding another session to the same log. If access is denied, check the provider's plan permissions; the command will not fall back to scraping a browser or using a Pocket Option session token.
+
+Convert the raw capture into a quote CSV:
+
+```bash
+bpr02-otc-data convert otc_ticks_raw.jsonl --symbol EURUSD_otc --source-clock-ahead-seconds 7200 --output otc_quotes.csv
+bpr02-quote-audit otc_quotes.csv --expiry-seconds 3 --target-resolution-fraction 0.25 --output otc_quote_audit.json
+```
+
+The adapter preserves the raw source timestamps in the JSONL log. The converter defaults to subtracting 7,200 seconds because OTCharts' published documentation describes the Pocket Option OTC book's clock as two hours ahead; the adjustment is configurable and must be checked against the platform/chart before combining files from different sources. Do not assume this third-party service is affiliated with or endorsed by Pocket Option.
+
+**Resolution limitation:** the provider's documented tick examples use whole-second timestamps. When several ticks share the same source second, the converter keeps the last tick for that second. This can be useful for exploratory 3-second research, but it cannot reconstruct subsecond order, network latency, the exact price used by the broker to settle a contract, or the platform's historical execution. A feed from another provider is not a substitute for the platform's own OTC quotes.
+
+```bash
+bpr02-seconds-backtest candles_m1.csv otc_quotes.csv \
+  --lookback 12 --expiry-seconds 3 --entry-delay-seconds 0.10 \
+  --max-quote-delay-seconds 0.25 --min-model-coverage 0.95 \
+  --walk-forward --initial-train-size 5000 --test-size 1000 --step-size 1000 \
+  --quote-source-label "otcharts_otc_recording" \
+  --output seconds_trades.csv --fold-summary seconds_folds.csv \
+  --manifest-output seconds_manifest.json
+```
+
+The output coverage gate exits with status `3` if fewer than 95% of candidate signals have modeled entry and settlement quotes, while saving the results and manifest for inspection. It also fails when there are no candidate signals. The gate prevents an incomplete sample from looking like a complete backtest; it does not establish that missing observations are random or that the strategy works.
 
 ## Research backtests for expiry measured in seconds
 
@@ -193,6 +229,7 @@ Choose `review` to mark an alert for manual inspection or `ignore` to dismiss it
 - `bpr02/backtest.py`: fixed-expiry bar simulation and metrics.
 - `bpr02/subminute.py`: second-expiry research using timestamped quote observations; exposed as `bpr02-seconds-backtest`.
 - `bpr02/quote_audit.py`: preflight quote sampling-gap audit, exposed as `bpr02-quote-audit`.
+- `bpr02/otc_data.py`: optional third-party read-only OTC stream recorder/converter, exposed as `bpr02-otc-data`; no broker orders or login.
 - `bpr02/evaluation.py`: chronological train/test and expanding walk-forward splits.
 - `bpr02/walkforward.py`: per-fold fixed-expiry simulations and fold metrics.
 - `bpr02/signal_bridge.py`: closed-candle JSONL alert bridge and append-only event log.

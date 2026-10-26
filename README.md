@@ -98,6 +98,34 @@ python -m bpr02 otc_candles_m1.csv \
 
 This conversion supports M1 pattern/indicator research. It does **not** recover the within-candle price path and is not suitable for reconstructing exact three-second entries or settlement. A clean report proves only structural completeness of the received file, not data-provider authenticity, Pocket Option OTC parity or profitability.
 
+## Dataset readiness preflight
+
+Before running any backtest, run the consolidated preflight on your candle CSV with the **actual timeframe explicitly specified**:
+
+```bash
+bpr02-readiness otc_candles_m1.csv \
+  --expected-interval-seconds 60 \
+  --max-missing-bars 0 \
+  --output readiness.json
+```
+
+For second-expiry research, include the timestamped quote file so the report can check sampling resolution and whether the quotes extend through the last candle's modeled settlement horizon:
+
+```bash
+bpr02-readiness otc_candles_m1.csv \
+  --quotes-csv otc_quotes.csv \
+  --expected-interval-seconds 60 \
+  --bar-timestamp-label open \
+  --expiry-seconds 3 \
+  --max-quote-delay-seconds 0.25 \
+  --max-quote-p95-gap-seconds 0.75 \
+  --output seconds_readiness.json
+```
+
+The command writes a JSON report even when data-quality gates fail. Exit code **0** means the configured preflight gates passed; **3** means at least one gate failed; **2** means the inputs or parameters could not be processed. The checks include candle structure, explicit source cadence, missing-bar budget, quote p95 gap, and quote time-range coverage. When no explicit quote-gap limit is supplied, the default screen is expiry multiplied by `--target-resolution-fraction` (0.25 by default); this is a heuristic, not a universal standard. Increase `--max-missing-bars` only when you deliberately accept the estimated gaps and have reviewed the gap report.
+
+For a bar-only CSV, omit `--quotes-csv`. The report then says whether the candles pass the bar-based preflight; it does not claim seconds-expiry readiness. A passing report is only a data-quality screen: it does not prove source identity, Pocket Option OTC parity, exact settlement reconstruction, strategy validity, or profitability. Synthetic CI fixtures check software behavior only.
+
 ## Quote-feed quality preflight
 
 Before interpreting a seconds-expiry backtest, audit the timestamps and sampling gaps in the quote CSV:

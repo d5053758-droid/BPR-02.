@@ -14,6 +14,7 @@ import math
 import os
 import re
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -608,6 +609,42 @@ def convert_tick_log_to_quotes(
     }
 
 
+def _write_json_report(path: str | Path, report: dict[str, object], *, overwrite: bool = False) -> Path:
+    """Atomically write a data-capture summary without exposing API credentials."""
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.exists() and not overwrite:
+        raise FileExistsError(
+            f"refusing to overwrite existing JSON report: {target}; pass --overwrite"
+        )
+    serialized = json.dumps(
+        report, indent=2, ensure_ascii=False, allow_nan=False
+    ) + "\n"
+    temporary_name: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=target.parent,
+            prefix=f".{target.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temporary:
+            temporary.write(serialized)
+            temporary.flush()
+            os.fsync(temporary.fileno())
+            temporary_name = temporary.name
+        if target.exists() and not overwrite:
+            raise FileExistsError(
+                f"refusing to overwrite existing JSON report: {target}; pass --overwrite"
+            )
+        os.replace(temporary_name, target)
+    finally:
+        if temporary_name and os.path.exists(temporary_name):
+            os.unlink(temporary_name)
+    return target
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="bpr02-otc-data",
@@ -643,6 +680,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Clock offset documented by OTCharts for its Pocket Option OTC book",
     )
     candles.add_argument("--output", default="otc_candles_5s.csv")
+    candles.add_argument(
+        "--report-output",
+        help="Optional JSON sidecar for the fetch summary; refuses to overwrite unless --overwrite is set",
+    )
     candles.add_argument("--overwrite", action="store_true")
     candles.add_argument("--api-key-env", default="OTCHARTS_API_KEY")
 
@@ -664,16 +705,29 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         if args.command == "candles":
+            output_path = Path(args.output)
+            report_path = Path(args.report_output) if args.report_output else None
+            if report_path is not None:
+                if report_path.resolve() == output_path.resolve():
+                    raise ValueError("--report-output must differ from the candle CSV output")
+                if report_path.exists() and not args.overwrite:
+                    raise FileExistsError(
+                        f"refusing to overwrite existing JSON report: {report_path}; pass --overwrite"
+                    )
+                report_path.parent.mkdir(parents=True, exist_ok=True)
             api_key = os.environ.get(args.api_key_env, "")
             result = fetch_historical_candles(
                 api_key=api_key,
-                output_path=args.output,
+                output_path=output_path,
                 symbol=args.symbol,
                 timeframe_seconds=args.timeframe_seconds,
                 limit=args.limit,
                 source_clock_ahead_seconds=args.source_clock_ahead_seconds,
                 overwrite=args.overwrite,
             )
+            if report_path is not None:
+                result["report_output_file"] = str(report_path)
+                _write_json_report(report_path, result, overwrite=args.overwrite)
         elif args.command == "record":
             api_key = os.environ.get(args.api_key_env, "")
             result = record_live_ticks(

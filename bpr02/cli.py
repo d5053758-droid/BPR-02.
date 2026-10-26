@@ -5,6 +5,7 @@ import argparse
 import json
 from pathlib import Path
 
+from .audit import audit_candles
 from .backtest import backtest_fixed_expiry, summarize_results
 from .data import load_ohlc_csv
 from .sensitivity import run_sensitivity_analysis
@@ -34,16 +35,22 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--payout", type=float, default=0.80, help="Net win payout per unit stake (0..1)")
     parser.add_argument("--stake", type=float, default=1.0, help="Fixed unit stake (>0)")
     parser.add_argument("--tie-policy", choices=("push", "loss"), default="push")
-    parser.add_argument("--walk-forward", action="store_true", help="Evaluate successive future-only test windows")
+
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--walk-forward", action="store_true", help="Evaluate successive future-only test windows")
+    modes.add_argument("--sensitivity", action="store_true", help="Compare lookback/expiry combinations on chronological train and test segments")
+    modes.add_argument("--audit-data", action="store_true", help="Audit timestamp intervals and candle quality, then exit")
+
     parser.add_argument("--initial-train-size", type=int, help="Initial training rows required with --walk-forward")
     parser.add_argument("--test-size", type=int, help="Rows per test window required with --walk-forward")
     parser.add_argument("--step-size", type=int, help="Rows to advance between test windows (defaults to test size)")
     parser.add_argument("--fold-summary", default="bpr02_fold_metrics.csv", help="Output CSV for walk-forward fold metrics")
-    parser.add_argument("--sensitivity", action="store_true", help="Compare lookback/expiry combinations on chronological train and test segments")
     parser.add_argument("--lookbacks", type=_parse_int_list, default=(6, 12, 18), help="Comma-separated lookback grid for --sensitivity (e.g. 6,12,18)")
     parser.add_argument("--expiry-grid", type=_parse_int_list, default=(1, 2, 3), help="Comma-separated expiry grid for --sensitivity (e.g. 1,2,3)")
     parser.add_argument("--train-fraction", type=float, default=0.70, help="Chronological training fraction for --sensitivity (0..1)")
     parser.add_argument("--sensitivity-output", default="bpr02_sensitivity.csv", help="Output CSV for sensitivity table")
+    parser.add_argument("--expected-interval-seconds", type=float, help="Expected candle interval for --audit-data; inferred when omitted")
+    parser.add_argument("--audit-output", default="bpr02_data_audit.json", help="Output JSON path for --audit-data")
     return parser
 
 
@@ -51,6 +58,21 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         candles = load_ohlc_csv(args.csv)
+
+        if args.audit_data:
+            report = audit_candles(
+                candles,
+                expected_interval_seconds=args.expected_interval_seconds,
+            )
+            destination = Path(args.audit_output)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
+            print(json.dumps({
+                "mode": "data_audit",
+                "audit_file": str(destination),
+                **report,
+            }, indent=2, default=str))
+            return 0 if report["structurally_valid"] else 2
 
         if args.sensitivity:
             sensitivity = run_sensitivity_analysis(

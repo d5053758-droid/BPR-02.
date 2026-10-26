@@ -26,18 +26,23 @@ def _parse_int_list(value: str) -> tuple[int, ...]:
 
 
 def _validate_manifest_path(args: argparse.Namespace) -> None:
-    """Prevent the manifest from overwriting input data or any active result file."""
-    protected = [Path(args.csv)]
+    """Prevent results or manifests from overwriting input data or each other."""
+    result_paths: list[Path] = []
     if args.audit_data:
-        protected.append(Path(args.audit_output))
+        result_paths.append(Path(args.audit_output))
     elif args.sensitivity:
-        protected.append(Path(args.sensitivity_output))
+        result_paths.append(Path(args.sensitivity_output))
     else:
-        protected.append(Path(args.output))
+        result_paths.append(Path(args.output))
         if args.walk_forward:
-            protected.append(Path(args.fold_summary))
+            result_paths.append(Path(args.fold_summary))
+
+    source = Path(args.csv).resolve()
+    if source in {path.resolve() for path in result_paths}:
+        raise ValueError("run output paths must not overwrite the source CSV")
     target = Path(args.manifest_output).resolve()
-    if target in {path.resolve() for path in protected}:
+    protected = [source, *(path.resolve() for path in result_paths)]
+    if target in set(protected):
         raise ValueError("--manifest-output must differ from the input and all run output paths")
 
 
@@ -219,7 +224,6 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         signals = sweep_reclaim_signals(candles, lookback=args.lookback)
-        stats = {}
         if args.walk_forward:
             if args.initial_train_size is None or args.test_size is None:
                 raise ValueError("--walk-forward requires --initial-train-size and --test-size")

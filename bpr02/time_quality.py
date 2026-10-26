@@ -2,8 +2,6 @@
 from __future__ import annotations
 
 from math import isclose, isfinite
-from typing import Any
-
 import pandas as pd
 
 
@@ -63,8 +61,10 @@ def continuity_segments(
     if "timestamp" not in candles.columns:
         # Still validate explicit parameters so a typo does not go unnoticed.
         if expected_interval_seconds is not None:
-            infer_expected_interval_seconds(pd.Series(dtype="datetime64[ns, UTC]"),
-                                            expected_interval_seconds=expected_interval_seconds)
+            infer_expected_interval_seconds(
+                pd.Series(dtype="datetime64[ns, UTC]"),
+                expected_interval_seconds=expected_interval_seconds,
+            )
         return pd.Series(0, index=candles.index, dtype="int64"), None, 0
 
     timestamps = pd.to_datetime(candles["timestamp"], errors="raise", utc=True)

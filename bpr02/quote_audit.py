@@ -11,6 +11,7 @@ from pathlib import Path
 import pandas as pd
 
 from .provenance import sha256_file
+from .quote_quality import assess_quote_temporal_resolution
 from .subminute import _parse_explicit_utc, load_quote_csv
 
 
@@ -65,23 +66,19 @@ def audit_quote_series(
 
     gaps = parsed.diff().dt.total_seconds().dropna()
     span_seconds = float((parsed.iloc[-1] - parsed.iloc[0]).total_seconds()) if len(parsed) >= 2 else 0.0
-    target_gap = expiry * fraction
     p50 = float(gaps.quantile(0.50)) if not gaps.empty else None
     p95 = float(gaps.quantile(0.95)) if not gaps.empty else None
     maximum = float(gaps.max()) if not gaps.empty else None
+    resolution = assess_quote_temporal_resolution(
+        observations=len(parsed),
+        span_seconds=span_seconds,
+        p95_gap_seconds=p95,
+        expiry_seconds=expiry,
+        target_resolution_fraction=fraction,
+    )
+    target_gap = float(resolution["target_p95_gap_seconds"])
     target_miss_count = int((gaps > target_gap).sum())
     half_expiry_miss_count = int((gaps > expiry / 2).sum())
-
-    if len(parsed) < 2:
-        label = "insufficient_observations"
-    elif span_seconds < expiry:
-        label = "insufficient_time_coverage"
-    elif p95 is not None and p95 <= target_gap:
-        label = "meets_configured_resolution_screen"
-    elif p95 is not None and p95 <= expiry / 2:
-        label = "limited_resolution_review_quote_delays"
-    else:
-        label = "low_temporal_resolution_for_requested_expiry"
 
     return {
         "mode": "quote_temporal_quality_audit",
@@ -91,8 +88,7 @@ def audit_quote_series(
         "end_timestamp": parsed.iloc[-1].isoformat(),
         "span_seconds": span_seconds,
         "expiry_seconds": expiry,
-        "target_resolution_fraction_of_expiry": fraction,
-        "target_p95_gap_seconds": target_gap,
+        **resolution,
         "gap_count": int(len(gaps)),
         "median_gap_seconds": p50,
         "p95_gap_seconds": p95,
@@ -102,8 +98,6 @@ def audit_quote_series(
         ),
         "gaps_over_target_count": target_miss_count,
         "gaps_over_half_expiry_count": half_expiry_miss_count,
-        "temporal_resolution_assessment": label,
-        "assessment_is_heuristic": True,
         "profitability_assessed": False,
         "broker_quote_parity_verified": False,
         "note": (

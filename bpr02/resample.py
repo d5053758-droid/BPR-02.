@@ -85,7 +85,6 @@ def resample_ohlc_to_interval(
 
     expected_per_target = target_interval // source_interval
     source_step = pd.Timedelta(seconds=source_interval)
-    target_step = pd.Timedelta(seconds=target_interval)
     output_rows: list[dict[str, Any]] = []
     incomplete_examples: list[dict[str, Any]] = []
     incomplete_buckets = 0

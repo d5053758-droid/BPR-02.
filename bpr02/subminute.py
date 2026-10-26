@@ -12,7 +12,6 @@ import argparse
 import json
 import math
 import sys
-from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
@@ -78,6 +77,7 @@ def _require_explicit_timezone_in_ohlc_csv(path: str | Path) -> None:
     except Exception as exc:
         raise ValueError(f"could not read signal candle timestamps: {exc}") from exc
     _parse_explicit_utc(raw_timestamps, field_name="signal candle CSV")
+
 
 def load_quote_csv(path: str | Path) -> pd.DataFrame:
     """Load timestamped scalar quotes from CSV with explicit timezone information.
@@ -233,6 +233,21 @@ def backtest_seconds_expiry(
     quote_frame["price"] = quote_prices
 
     quote_times = pd.DatetimeIndex(quote_frame["timestamp"])
+    quote_intervals = quote_times.to_series().diff().dt.total_seconds().dropna()
+    quote_span_seconds = (
+        float((quote_times[-1] - quote_times[0]).total_seconds())
+        if len(quote_times) >= 2
+        else 0.0
+    )
+    quote_gap_median_seconds = (
+        float(quote_intervals.median()) if not quote_intervals.empty else None
+    )
+    quote_gap_p95_seconds = (
+        float(quote_intervals.quantile(0.95)) if not quote_intervals.empty else None
+    )
+    quote_gap_max_seconds = (
+        float(quote_intervals.max()) if not quote_intervals.empty else None
+    )
     total_signals = int(signal_series.isin([CALL, PUT]).sum())
     counters = {
         "no_entry_quote": 0,
@@ -320,10 +335,20 @@ def backtest_seconds_expiry(
     ]
     results = pd.DataFrame(trades, columns=columns)
     results["cumulative_pnl"] = results["pnl"].cumsum()
-    diagnostics: dict[str, int | float | str] = {
+    unmodeled_signals = total_signals - int(len(results))
+    diagnostics: dict[str, int | float | str | None] = {
         "signal_candles": int(len(candles)),
         "candidate_signals": total_signals,
         "modeled_trades": int(len(results)),
+        "unmodeled_signals": unmodeled_signals,
+        "modeled_signal_fraction": (len(results) / total_signals) if total_signals else None,
+        "quote_observations": int(len(quote_frame)),
+        "quote_start_timestamp": quote_times[0].isoformat(),
+        "quote_end_timestamp": quote_times[-1].isoformat(),
+        "quote_span_seconds": quote_span_seconds,
+        "quote_gap_median_seconds": quote_gap_median_seconds,
+        "quote_gap_p95_seconds": quote_gap_p95_seconds,
+        "quote_gap_max_seconds": quote_gap_max_seconds,
         **counters,
         "bar_seconds": bars_seconds,
         "bar_timestamp_label": bar_timestamp_label,
@@ -383,6 +408,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.lookback < 2:
             raise ValueError("--lookback must be >= 2")
+        if not isinstance(args.quote_source_label, str) or not args.quote_source_label.strip():
+            raise ValueError("--quote-source-label must be a non-empty descriptive label")
         _require_explicit_timezone_in_ohlc_csv(candles_path)
         candles = load_ohlc_csv(candles_path)
         quotes = load_quote_csv(quotes_path)

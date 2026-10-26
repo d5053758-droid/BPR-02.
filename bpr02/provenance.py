@@ -43,6 +43,7 @@ def build_run_manifest(
     mode: str,
     parameters: Mapping[str, Any],
     outputs: Mapping[str, str | Path],
+    additional_sources: Mapping[str, str | Path] | None = None,
     rows: int | None = None,
     start_timestamp: str | None = None,
     end_timestamp: str | None = None,
@@ -55,6 +56,17 @@ def build_run_manifest(
     source = Path(source_path)
     if rows is not None and rows < 0:
         raise ValueError("rows must be >= 0 when provided")
+    related: dict[str, dict[str, Any]] = {}
+    for label, path in (additional_sources or {}).items():
+        if not isinstance(label, str) or not label.strip():
+            raise ValueError("additional source labels must be non-empty strings")
+        related_path = Path(path)
+        related[label] = {
+            "file_name": related_path.name,
+            "path": str(related_path.resolve()),
+            "sha256": sha256_file(related_path),
+            "bytes": related_path.stat().st_size,
+        }
 
     return {
         "manifest_schema_version": 1,
@@ -62,9 +74,11 @@ def build_run_manifest(
         "mode": mode,
         "source": {
             "file_name": source.name,
+            "path": str(source.resolve()),
             "sha256": sha256_file(source),
             "bytes": source.stat().st_size,
         },
+        "additional_sources": related,
         "dataset": {
             "rows": rows,
             "start_timestamp": start_timestamp,
@@ -91,6 +105,9 @@ def write_run_manifest(
     protected_paths: list[Path] = []
     if source_path is not None:
         protected_paths.append(Path(source_path).resolve())
+    for source_info in manifest.get("additional_sources", {}).values():
+        if isinstance(source_info, Mapping) and source_info.get("path"):
+            protected_paths.append(Path(str(source_info["path"])).resolve())
     for output_path in manifest.get("outputs", {}).values():
         protected_paths.append(Path(output_path).resolve())
 

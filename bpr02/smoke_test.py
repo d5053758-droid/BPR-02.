@@ -314,7 +314,13 @@ def run_smoke_test() -> dict[str, object]:
             raise RuntimeError("Seconds-expiry simulation did not preserve the requested expiry")
         if seconds_diagnostics["modeled_trades"] + seconds_diagnostics["unmodeled_signals"] != seconds_diagnostics["candidate_signals"]:
             raise RuntimeError("Seconds-expiry diagnostics failed to account for candidate signals")
+        if (
+            not seconds_diagnostics.get("quote_temporal_resolution_assessment")
+            or seconds_diagnostics.get("quote_resolution_assessment_is_heuristic") is not True
+        ):
+            raise RuntimeError("Seconds-expiry quote-resolution assessment is missing")
         completed.append("seconds_expiry_backtest")
+        completed.append("seconds_quote_resolution_screen")
 
         seconds_walk_trades, seconds_fold_metrics, seconds_wf_diagnostics = run_seconds_walk_forward(
             candles,
@@ -436,6 +442,8 @@ def run_smoke_test() -> dict[str, object]:
             "otc_duplicate_second_ticks_collapsed": conversion["same_second_ticks_collapsed"],
             "seconds_expiry_candidates": seconds_diagnostics["candidate_signals"],
             "seconds_expiry_modeled_trades": len(seconds_trades),
+            "seconds_quote_temporal_resolution_assessment": seconds_diagnostics["quote_temporal_resolution_assessment"],
+            "seconds_quote_target_p95_gap_seconds": seconds_diagnostics["quote_target_p95_gap_seconds"],
             "seconds_expiry_unmodeled_signals": seconds_diagnostics["unmodeled_signals"],
             "seconds_walk_forward_folds": len(seconds_fold_metrics),
             "seconds_walk_forward_candidates": seconds_wf_diagnostics["candidate_signals"],

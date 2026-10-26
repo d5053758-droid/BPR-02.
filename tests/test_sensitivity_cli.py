@@ -20,6 +20,7 @@ def write_sample_csv(path):
 def test_sensitivity_cli_exports_train_and_test_grid(tmp_path, capsys):
     source = tmp_path / "candles.csv"
     output = tmp_path / "sensitivity.csv"
+    manifest = tmp_path / "sensitivity-manifest.json"
     write_sample_csv(source)
     code = main([
         str(source),
@@ -28,6 +29,7 @@ def test_sensitivity_cli_exports_train_and_test_grid(tmp_path, capsys):
         "--expiry-grid", "1,2",
         "--train-fraction", "0.6",
         "--sensitivity-output", str(output),
+        "--manifest-output", str(manifest),
     ])
     result = json.loads(capsys.readouterr().out)
     assert code == 0
@@ -37,3 +39,9 @@ def test_sensitivity_cli_exports_train_and_test_grid(tmp_path, capsys):
     rows = pd.read_csv(output)
     assert len(rows) == 8
     assert set(rows["segment"]) == {"train", "test"}
+    saved_manifest = json.loads(manifest.read_text(encoding="utf-8"))
+    assert result["manifest_file"] == str(manifest)
+    assert saved_manifest["mode"] == "sensitivity_research_only"
+    assert saved_manifest["dataset"]["rows"] == 30
+    assert saved_manifest["parameters"]["lookbacks"] == [2, 4]
+    assert saved_manifest["summary"]["grid_rows"] == 8

@@ -26,6 +26,7 @@ from .indicators import atr, ema
 from .replay import main as replay_main
 from .review import record_review
 from .quote_audit import audit_quote_series
+from .resample import resample_ohlc_to_interval
 from .otc_data import convert_tick_log_to_quotes, fetch_historical_candles
 from .sensitivity import run_sensitivity_analysis
 from .signal_bridge import SignalBridge, run_jsonl_bridge
@@ -212,6 +213,33 @@ def run_smoke_test() -> dict[str, object]:
             raise RuntimeError("Read-only OTC candle adapter unexpectedly indicates order execution")
         completed.append("otc_candle_fetch_mock")
 
+        # Aggregate synthetic 5-second OHLC into M1 while excluding an incomplete minute.
+        # This verifies structure only and does not create or validate market data.
+        resample_times = pd.date_range(
+            "2025-01-01T00:00:00Z", periods=24, freq="5s"
+        )
+        resample_rows: list[dict[str, object]] = []
+        for index, timestamp in enumerate(resample_times):
+            open_price = 1.1000 + index * 0.00001
+            close_price = open_price + (0.000002 if index % 2 == 0 else -0.000002)
+            resample_rows.append({
+                "timestamp": timestamp,
+                "open": open_price,
+                "high": max(open_price, close_price) + 0.000005,
+                "low": min(open_price, close_price) - 0.000005,
+                "close": close_price,
+            })
+        resampled_m1, resample_report = resample_ohlc_to_interval(
+            pd.DataFrame(resample_rows).drop(index=3).reset_index(drop=True)
+        )
+        if (
+            len(resampled_m1) != 1
+            or resample_report["incomplete_target_buckets_excluded"] != 1
+            or resample_report["missing_source_slots_inside_incomplete_buckets"] != 1
+        ):
+            raise RuntimeError("M1 resampler did not exclude and report the incomplete minute")
+        completed.append("quality_aware_m1_resampling")
+
         # Exercise the raw tick-log -> UTC-second CSV path without a network call.
         # The provider's documented OTC clock offset is simulated and remains configurable.
         raw_tick_log = root / "synthetic_otc_ticks.jsonl"
@@ -381,6 +409,9 @@ def run_smoke_test() -> dict[str, object]:
             "otc_candle_rows_fetched": candle_fetch_result["output_candles"],
             "otc_candle_timeframe_seconds": candle_fetch_result["timeframe_seconds"],
             "otc_candle_orders_submitted": candle_fetch_result["orders_submitted"],
+            "resampled_m1_complete_bars": len(resampled_m1),
+            "resampling_partial_buckets_excluded": resample_report["incomplete_target_buckets_excluded"],
+            "resampling_missing_source_slots": resample_report["missing_source_slots_inside_incomplete_buckets"],
             "otc_tick_rows_converted": conversion["tick_rows_for_symbol"],
             "otc_duplicate_second_ticks_collapsed": conversion["same_second_ticks_collapsed"],
             "seconds_expiry_candidates": seconds_diagnostics["candidate_signals"],

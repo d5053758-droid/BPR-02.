@@ -57,3 +57,33 @@ def test_cli_requires_walk_forward_window_sizes(tmp_path, capsys):
     output = capsys.readouterr().out
     assert code == 2
     assert "requires --initial-train-size and --test-size" in output
+
+
+def test_cli_refuses_to_overwrite_source_csv_with_result_output(tmp_path, capsys):
+    source = tmp_path / "candles.csv"
+    write_sample_csv(source)
+    original = source.read_bytes()
+    manifest = tmp_path / "manifest.json"
+
+    code = main([
+        str(source),
+        "--output", str(source),
+        "--manifest-output", str(manifest),
+    ])
+    output = capsys.readouterr().out
+    assert code == 2
+    assert "must not overwrite the source CSV" in output
+    assert source.read_bytes() == original
+    assert not manifest.exists()
+
+
+def test_cli_refuses_manifest_path_that_matches_source_csv(tmp_path, capsys):
+    source = tmp_path / "candles.csv"
+    write_sample_csv(source)
+    original = source.read_bytes()
+
+    code = main([str(source), "--manifest-output", str(source)])
+    output = capsys.readouterr().out
+    assert code == 2
+    assert "manifest-output" in output
+    assert source.read_bytes() == original

@@ -113,7 +113,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--expiry-grid", type=_parse_int_list, default=(1, 2, 3), help="Comma-separated expiry grid for --sensitivity (e.g. 1,2,3)")
     parser.add_argument("--train-fraction", type=float, default=0.70, help="Chronological training fraction for --sensitivity (0..1)")
     parser.add_argument("--sensitivity-output", default="bpr02_sensitivity.csv", help="Output CSV for sensitivity table")
-    parser.add_argument("--expected-interval-seconds", type=float, help="Expected candle interval for --audit-data; inferred when omitted")
+    parser.add_argument("--expected-interval-seconds", type=float, help="Expected candle spacing in seconds for audits, signals and backtests; inferred when omitted")
     parser.add_argument("--audit-output", default="bpr02_data_audit.json", help="Output JSON path for --audit-data")
     return parser
 
@@ -170,6 +170,7 @@ def main(argv: list[str] | None = None) -> int:
                 candles,
                 lookbacks=args.lookbacks,
                 expiry_bars=args.expiry_grid,
+                expected_interval_seconds=args.expected_interval_seconds,
                 train_fraction=args.train_fraction,
                 payout=args.payout,
                 stake=args.stake,
@@ -184,6 +185,7 @@ def main(argv: list[str] | None = None) -> int:
                 parameters={
                     "lookbacks": list(args.lookbacks),
                     "expiry_grid": list(args.expiry_grid),
+                    "expected_interval_seconds": args.expected_interval_seconds,
                     "train_fraction": args.train_fraction,
                     "payout": args.payout,
                     "stake": args.stake,
@@ -223,7 +225,10 @@ def main(argv: list[str] | None = None) -> int:
             }, indent=2, default=str))
             return 0
 
-        signals = sweep_reclaim_signals(candles, lookback=args.lookback)
+        signals = sweep_reclaim_signals(
+            candles, lookback=args.lookback,
+            expected_interval_seconds=args.expected_interval_seconds,
+        )
         if args.walk_forward:
             if args.initial_train_size is None or args.test_size is None:
                 raise ValueError("--walk-forward requires --initial-train-size and --test-size")
@@ -234,6 +239,7 @@ def main(argv: list[str] | None = None) -> int:
                 step_size=args.step_size,
                 lookback=args.lookback,
                 expiry_bars=args.expiry_bars,
+                expected_interval_seconds=args.expected_interval_seconds,
                 payout=args.payout,
                 stake=args.stake,
                 tie_policy=args.tie_policy,
@@ -251,6 +257,7 @@ def main(argv: list[str] | None = None) -> int:
             parameters = {
                 "lookback": args.lookback,
                 "expiry_bars": args.expiry_bars,
+                "expected_interval_seconds": args.expected_interval_seconds,
                 "payout": args.payout,
                 "stake": args.stake,
                 "tie_policy": args.tie_policy,
@@ -263,6 +270,7 @@ def main(argv: list[str] | None = None) -> int:
                 candles,
                 signals,
                 expiry_bars=args.expiry_bars,
+                expected_interval_seconds=args.expected_interval_seconds,
                 payout=args.payout,
                 stake=args.stake,
                 tie_policy=args.tie_policy,
@@ -273,6 +281,7 @@ def main(argv: list[str] | None = None) -> int:
             parameters = {
                 "lookback": args.lookback,
                 "expiry_bars": args.expiry_bars,
+                "expected_interval_seconds": args.expected_interval_seconds,
                 "payout": args.payout,
                 "stake": args.stake,
                 "tie_policy": args.tie_policy,

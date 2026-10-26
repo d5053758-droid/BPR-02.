@@ -1,3 +1,4 @@
+import hashlib
 import json
 
 import pandas as pd
@@ -218,6 +219,114 @@ def test_seconds_mode_needs_lookback_history_but_not_an_extra_settlement_bar(tmp
     assert code == 0
 
 
+
+def write_provider_report(path, candle_path, *, symbol="EURUSD_otc", timeframe=60, missing_bars=0, mode="read_only_otc_candle_fetch"):
+    payload = {
+        "mode": mode,
+        "source": "OTCharts third-party market-data API",
+        "venue": "otc",
+        "symbol": symbol,
+        "timeframe_seconds": timeframe,
+        "instrument_status": "closed",
+        "provider_gaps": {"runs": 0 if missing_bars == 0 else 1, "missingBars": missing_bars},
+        "output_sha256": hashlib.sha256(candle_path.read_bytes()).hexdigest(),
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def test_preflight_validates_acquisition_sidecar_hash_symbol_timeframe_and_gap_metadata(tmp_path, capsys):
+    candles = tmp_path / "candles.csv"
+    provider = tmp_path / "fetch_report.json"
+    output = tmp_path / "readiness.json"
+    write_candles(candles)
+    write_provider_report(provider, candles)
+    code = main([
+        str(candles),
+        "--provider-report", str(provider),
+        "--expected-interval-seconds", "60",
+        "--lookback", "2",
+        "--output", str(output),
+    ])
+    capsys.readouterr()
+    report = json.loads(output.read_text(encoding="utf-8"))
+    assert code == 0
+    assert report["gates"]["provider_report_matches_candle_csv"]["passed"] is True
+    assert report["gates"]["provider_instrument_matches_expected"]["passed"] is True
+    assert report["gates"]["provider_interval_matches_expected"]["passed"] is True
+    assert report["gates"]["provider_gap_metadata_within_budget"]["passed"] is True
+    # A closed instrument is still a valid historical dataset state; this is not a live-trading gate.
+    assert report["provider_quality"]["instrument_status"] == "closed"
+    assert report["source_files"]["provider_report"]["sha256"]
+
+
+def test_preflight_fails_when_provider_sidecar_belongs_to_different_csv(tmp_path, capsys):
+    candles = tmp_path / "candles.csv"
+    provider = tmp_path / "fetch_report.json"
+    output = tmp_path / "readiness.json"
+    write_candles(candles)
+    write_provider_report(provider, candles)
+    candles.write_text(candles.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+    code = main([
+        str(candles), "--provider-report", str(provider),
+        "--expected-interval-seconds", "60", "--lookback", "2",
+        "--output", str(output),
+    ])
+    capsys.readouterr()
+    report = json.loads(output.read_text(encoding="utf-8"))
+    assert code == 3
+    assert report["gates"]["provider_report_matches_candle_csv"]["passed"] is False
+
+
+@pytest.mark.parametrize(
+    ("report_kwargs", "gate_name"),
+    [
+        ({"symbol": "GBPUSD_otc"}, "provider_instrument_matches_expected"),
+        ({"timeframe": 5}, "provider_interval_matches_expected"),
+        ({"missing_bars": 1}, "provider_gap_metadata_within_budget"),
+        ({"mode": "unrecognized"}, "provider_report_type"),
+    ],
+)
+def test_preflight_rejects_provider_metadata_mismatch(tmp_path, capsys, report_kwargs, gate_name):
+    candles = tmp_path / "candles.csv"
+    provider = tmp_path / "fetch_report.json"
+    output = tmp_path / "readiness.json"
+    write_candles(candles)
+    write_provider_report(provider, candles, **report_kwargs)
+    code = main([
+        str(candles), "--provider-report", str(provider),
+        "--expected-interval-seconds", "60", "--lookback", "2",
+        "--output", str(output),
+    ])
+    capsys.readouterr()
+    report = json.loads(output.read_text(encoding="utf-8"))
+    assert code == 3
+    assert report["gates"][gate_name]["passed"] is False
+
+
+def test_preflight_rejects_provider_report_path_that_aliases_input_or_output(tmp_path, capsys):
+    candles = tmp_path / "candles.csv"
+    output = tmp_path / "readiness.json"
+    write_candles(candles)
+    before = candles.read_bytes()
+    code = main([
+        str(candles), "--provider-report", str(candles),
+        "--expected-interval-seconds", "60", "--output", str(output),
+    ])
+    assert code == 2
+    assert "provider report must differ" in capsys.readouterr().err
+    assert candles.read_bytes() == before
+
+    provider = tmp_path / "provider.json"
+    write_provider_report(provider, candles)
+    code = main([
+        str(candles), "--provider-report", str(provider),
+        "--expected-interval-seconds", "60", "--output", str(provider),
+    ])
+    assert code == 2
+    assert "must not overwrite either input CSV" in capsys.readouterr().err
+    assert provider.is_file()
+
+
 def test_preflight_rejects_output_overwriting_input(tmp_path, capsys):
     candles = tmp_path / "candles.csv"
     write_candles(candles)
@@ -241,6 +350,7 @@ def test_preflight_rejects_output_overwriting_input(tmp_path, capsys):
         ({"max_quote_delay_seconds": -1}, "max_quote_delay_seconds"),
         ({"lookback": 1}, "lookback"),
         ({"expiry_bars": 0}, "expiry_bars"),
+        ({"expected_symbol": ""}, "expected_symbol"),
         ({"bar_timestamp_label": "middle"}, "bar_timestamp_label"),
     ],
 )

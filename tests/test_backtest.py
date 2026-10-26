@@ -151,3 +151,21 @@ def test_backtest_rejects_missing_timestamps():
     data.loc[0, "timestamp"] = pd.NaT
     with pytest.raises(ValueError, match="must not be missing"):
         backtest_fixed_expiry(data, pd.Series([CALL, NO_TRADE]))
+
+
+def test_bar_backtest_omits_trades_that_cross_missing_candle_intervals():
+    data = candles([10, 11, 12], [10, 10, 11])
+    data["timestamp"] = pd.to_datetime([
+        "2025-01-01T00:00:00Z",
+        "2025-01-01T00:01:00Z",
+        "2025-01-01T00:03:00Z",
+    ])
+    signals = pd.Series([CALL, CALL, NO_TRADE])
+
+    one_bar = backtest_fixed_expiry(data, signals, expiry_bars=1)
+    assert one_bar["signal_timestamp"].astype(str).tolist() == [
+        "2025-01-01 00:00:00+00:00"
+    ]
+
+    two_bars = backtest_fixed_expiry(data, signals, expiry_bars=2)
+    assert two_bars.empty

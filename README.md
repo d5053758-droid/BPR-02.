@@ -170,6 +170,20 @@ bpr02-otc-data candles --symbol EURUSD_otc --timeframe-seconds 5 \
 
 The JSON sidecar contains the acquisition summary and does not store the API key. The report path must differ from the CSV path; existing files are preserved unless `--overwrite` is explicitly supplied. A sidecar improves reproducibility, but is not a signed or independently verified provider attestation.
 
+Run the preflight against both files to verify that the report belongs to this exact CSV and that the provider-reported symbol, timeframe and gap metadata are consistent:
+
+```bash
+bpr02-readiness otc_candles_5s.csv \
+  --provider-report otc_candles_5s_report.json \
+  --expected-symbol EURUSD_otc \
+  --expected-interval-seconds 5 \
+  --max-missing-bars 0 \
+  --lookback 12 \
+  --output otc_candles_5s_readiness.json
+```
+
+When a provider report is supplied, readiness adds gates for report type, CSV SHA-256 match, instrument/venue, timeframe and provider gap metadata. The status field (`open`/`closed`) is reported but does not disqualify historical research by itself. These are consistency checks on local files, not cryptographic proof that the provider produced them.
+
 Inspect the exported file in BPR-02:
 
 ```bash

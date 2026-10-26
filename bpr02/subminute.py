@@ -597,6 +597,31 @@ def build_parser() -> argparse.ArgumentParser:
         default="unverified_quote_feed",
         help="Descriptive feed label for the manifest; not independently verified",
     )
+    parser.add_argument(
+        "--walk-forward",
+        action="store_true",
+        help="Evaluate the fixed signal rule on expanding chronological test windows",
+    )
+    parser.add_argument(
+        "--initial-train-size",
+        type=int,
+        help="Number of earlier candles before the first test window; required with --walk-forward",
+    )
+    parser.add_argument(
+        "--test-size",
+        type=int,
+        help="Number of candles in each future-only test window; required with --walk-forward",
+    )
+    parser.add_argument(
+        "--step-size",
+        type=int,
+        help="Rows to advance between test windows (must be >= test size; defaults to test size)",
+    )
+    parser.add_argument(
+        "--fold-summary",
+        default="bpr02_seconds_fold_metrics.csv",
+        help="Output CSV for per-fold out-of-sample metrics",
+    )
     return parser
 
 
@@ -606,15 +631,21 @@ def main(argv: list[str] | None = None) -> int:
     quotes_path = Path(args.quotes_csv)
     output_path = Path(args.output)
     manifest_path = Path(args.manifest_output)
-    protected_inputs = {candles_path.resolve(), quotes_path.resolve()}
+    fold_summary_path = Path(args.fold_summary)
+
+    input_paths = {candles_path.resolve(), quotes_path.resolve()}
     if candles_path.resolve() == quotes_path.resolve():
         print("ERROR: candles_csv and quotes_csv must be different files", file=sys.stderr)
         return 2
-    if output_path.resolve() in protected_inputs:
-        print("ERROR: output path must not overwrite either input CSV", file=sys.stderr)
+
+    output_paths = [output_path.resolve(), manifest_path.resolve()]
+    if args.walk_forward:
+        output_paths.append(fold_summary_path.resolve())
+    if any(path in input_paths for path in output_paths):
+        print("ERROR: output paths must not overwrite either input CSV", file=sys.stderr)
         return 2
-    if manifest_path.resolve() in protected_inputs or manifest_path.resolve() == output_path.resolve():
-        print("ERROR: manifest path must differ from both input CSVs and the output CSV", file=sys.stderr)
+    if len(set(output_paths)) != len(output_paths):
+        print("ERROR: trades, manifest, and fold-summary output paths must be different", file=sys.stderr)
         return 2
 
     try:
@@ -622,23 +653,96 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError("--lookback must be >= 2")
         if not isinstance(args.quote_source_label, str) or not args.quote_source_label.strip():
             raise ValueError("--quote-source-label must be a non-empty descriptive label")
+        if args.walk_forward and (
+            args.initial_train_size is None or args.test_size is None
+        ):
+            raise ValueError("--walk-forward requires --initial-train-size and --test-size")
+
         _require_explicit_timezone_in_ohlc_csv(candles_path)
         candles = load_ohlc_csv(candles_path)
         quotes = load_quote_csv(quotes_path)
         signal_frame = sweep_reclaim_signals(candles, lookback=args.lookback)
-        trades, diagnostics = backtest_seconds_expiry(
-            candles,
-            signal_frame,
-            quotes,
-            bar_seconds=args.bar_seconds,
-            bar_timestamp_label=args.bar_timestamp_label,
-            expiry_seconds=args.expiry_seconds,
-            entry_delay_seconds=args.entry_delay_seconds,
-            max_quote_delay_seconds=args.max_quote_delay_seconds,
-            payout=args.payout,
-            stake=args.stake,
-            tie_policy=args.tie_policy,
-        )
+
+        base_parameters: dict[str, object] = {
+            "lookback": args.lookback,
+            "bar_seconds": args.bar_seconds,
+            "bar_timestamp_label": args.bar_timestamp_label,
+            "expiry_seconds": args.expiry_seconds,
+            "entry_delay_seconds": args.entry_delay_seconds,
+            "max_quote_delay_seconds": args.max_quote_delay_seconds,
+            "payout": args.payout,
+            "stake": args.stake,
+            "tie_policy": args.tie_policy,
+            "quote_source_label": args.quote_source_label,
+        }
+
+        if args.walk_forward:
+            trades, fold_metrics, diagnostics = run_seconds_walk_forward(
+                candles,
+                signal_frame,
+                quotes,
+                initial_train_size=args.initial_train_size,
+                test_size=args.test_size,
+                step_size=args.step_size,
+                bar_seconds=args.bar_seconds,
+                bar_timestamp_label=args.bar_timestamp_label,
+                expiry_seconds=args.expiry_seconds,
+                entry_delay_seconds=args.entry_delay_seconds,
+                max_quote_delay_seconds=args.max_quote_delay_seconds,
+                payout=args.payout,
+                stake=args.stake,
+                tie_policy=args.tie_policy,
+            )
+            fold_summary_path.parent.mkdir(parents=True, exist_ok=True)
+            fold_metrics.to_csv(fold_summary_path, index=False)
+            mode = "seconds_expiry_walk_forward_research_only"
+            base_parameters.update({
+                "walk_forward": True,
+                "initial_train_size": args.initial_train_size,
+                "test_size": args.test_size,
+                "step_size": args.test_size if args.step_size is None else args.step_size,
+            })
+            output_map = {
+                "trades_csv": str(output_path),
+                "fold_summary_csv": str(fold_summary_path),
+            }
+            extra_result: dict[str, object] = {
+                "fold_summary_file": str(fold_summary_path),
+                "folds": int(len(fold_metrics)),
+            }
+            manifest_notes = (
+                "Only signals within future-only test folds are included in the reported trades.",
+                "The fixed sweep/reclaim rule is not fitted or optimized within folds.",
+                "This simulation does not send or modify orders.",
+                "The quote-source label is user supplied and not independently verified.",
+                "A conventional EUR/USD quote series does not establish parity with Pocket Option EUR/USD OTC.",
+                "Quote selection uses the first observation at or after target times, within the configured delay tolerance.",
+                "This is historical research, not proof of profitability.",
+            )
+        else:
+            trades, diagnostics = backtest_seconds_expiry(
+                candles,
+                signal_frame,
+                quotes,
+                bar_seconds=args.bar_seconds,
+                bar_timestamp_label=args.bar_timestamp_label,
+                expiry_seconds=args.expiry_seconds,
+                entry_delay_seconds=args.entry_delay_seconds,
+                max_quote_delay_seconds=args.max_quote_delay_seconds,
+                payout=args.payout,
+                stake=args.stake,
+                tie_policy=args.tie_policy,
+            )
+            mode = "seconds_expiry_research_only"
+            output_map = {"trades_csv": str(output_path)}
+            extra_result = {}
+            manifest_notes = (
+                "This simulation does not send or modify orders.",
+                "The quote-source label is user supplied and not independently verified.",
+                "A conventional EUR/USD quote series does not establish parity with Pocket Option EUR/USD OTC.",
+                "Results depend on the configured quote-delay tolerance and settlement-price convention.",
+                "This is historical research, not proof of profitability.",
+            )
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
         trades.to_csv(output_path, index=False)
@@ -646,39 +750,23 @@ def main(argv: list[str] | None = None) -> int:
         manifest = build_run_manifest(
             source_path=candles_path,
             additional_sources={"quotes": quotes_path},
-            mode="seconds_expiry_research_only",
-            parameters={
-                "lookback": args.lookback,
-                "bar_seconds": args.bar_seconds,
-                "bar_timestamp_label": args.bar_timestamp_label,
-                "expiry_seconds": args.expiry_seconds,
-                "entry_delay_seconds": args.entry_delay_seconds,
-                "max_quote_delay_seconds": args.max_quote_delay_seconds,
-                "payout": args.payout,
-                "stake": args.stake,
-                "tie_policy": args.tie_policy,
-                "quote_source_label": args.quote_source_label,
-            },
-            outputs={"trades_csv": str(output_path)},
+            mode=mode,
+            parameters=base_parameters,
+            outputs=output_map,
             rows=len(candles),
             start_timestamp=str(candles["timestamp"].iloc[0]),
             end_timestamp=str(candles["timestamp"].iloc[-1]),
             summary={**diagnostics, **stats},
-            notes=(
-                "This simulation does not send or modify orders.",
-                "The quote-source label is user supplied and not independently verified.",
-                "A conventional EUR/USD quote series does not establish parity with Pocket Option EUR/USD OTC.",
-                "Results depend on the configured quote-delay tolerance and settlement-price convention.",
-                "This is historical research, not proof of profitability.",
-            ),
+            notes=manifest_notes,
         )
         write_run_manifest(manifest_path, manifest, source_path=candles_path)
         result = {
-            "mode": "seconds_expiry_research_only",
+            "mode": mode,
             "trades_file": str(output_path),
             "manifest_file": str(manifest_path),
             **diagnostics,
             **stats,
+            **extra_result,
             "orders_submitted": 0,
             "warning": (
                 "Second-expiry results require quotes from the intended market and price convention; "

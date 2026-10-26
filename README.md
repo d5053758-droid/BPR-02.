@@ -159,6 +159,17 @@ unset OTCHARTS_API_KEY
 
 This performs **one read-only request** for the latest page of five-second OTC candles. The adapter validates the returned symbol, candle timestamps and OHLC ranges, adjusts the provider's documented two-hour OTC clock offset to UTC, and records a SHA-256 hash and coverage summary. When the response includes the provider's current `open` field, the result also preserves it as `instrument_status`; this is current status metadata, not a guarantee that the instrument will be open during a future session or a signal to trade. It refuses to overwrite an existing CSV unless `--overwrite` is explicitly provided. The number of candles actually returned may be lower than requested; inspect the JSON summary rather than assuming the requested row count was delivered. If the provider reports an interval in the response, the adapter now rejects a mismatch with the requested timeframe and reports timestamp-spacing irregularities/missing-bar estimates separately from the provider's own `gaps` metadata.
 
+Save the acquisition report next to the CSV so provider status, declared interval, timestamp-gap diagnostics and the source hash remain available:
+
+```bash
+bpr02-otc-data candles --symbol EURUSD_otc --timeframe-seconds 5 \
+  --limit 1500 \
+  --output otc_candles_5s.csv \
+  --report-output otc_candles_5s_report.json
+```
+
+The JSON sidecar contains the acquisition summary and does not store the API key. The report path must differ from the CSV path; existing files are preserved unless `--overwrite` is explicitly supplied. A sidecar improves reproducibility, but is not a signed or independently verified provider attestation.
+
 Inspect the exported file in BPR-02:
 
 ```bash

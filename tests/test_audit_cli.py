@@ -31,3 +31,30 @@ def test_audit_cli_writes_json_with_gap_report(tmp_path, capsys):
     assert output["mode"] == "data_audit"
     assert report["estimated_missing_bars"] == 2
     assert report["structurally_valid"] is True
+
+
+
+def test_audit_cli_reports_raw_duplicates_and_invalid_candles(tmp_path, capsys):
+    source = tmp_path / "bad_candles.csv"
+    result_path = tmp_path / "bad_audit.json"
+    frame = pd.DataFrame({
+        "timestamp": [
+            "2025-01-01T00:01:00Z",
+            "2025-01-01T00:00:00Z",
+            "2025-01-01T00:00:00Z",
+        ],
+        "open": [1.0, 1.0, 1.0],
+        "high": [1.1, 0.5, 1.1],
+        "low": [0.9, 0.9, 0.9],
+        "close": [1.05, 1.0, 1.05],
+    })
+    frame.to_csv(source, index=False)
+    code = main([str(source), "--audit-data", "--audit-output", str(result_path)])
+    output = json.loads(capsys.readouterr().out)
+    report = json.loads(result_path.read_text(encoding="utf-8"))
+    assert code == 2
+    assert output["mode"] == "data_audit"
+    assert report["duplicate_timestamps"] == 1
+    assert report["out_of_order_steps"] >= 1
+    assert report["invalid_ohlc_rows"] >= 1
+    assert report["structurally_valid"] is False

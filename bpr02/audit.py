@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from math import isfinite
 
 import pandas as pd
 
@@ -26,8 +27,10 @@ def audit_candles(
     missing_columns = sorted(required.difference(candles.columns))
     if missing_columns:
         raise ValueError(f"candles missing columns: {missing_columns}")
-    if expected_interval_seconds is not None and expected_interval_seconds <= 0:
-        raise ValueError("expected_interval_seconds must be > 0")
+    if expected_interval_seconds is not None and (
+        not isfinite(expected_interval_seconds) or expected_interval_seconds <= 0
+    ):
+        raise ValueError("expected_interval_seconds must be a finite value > 0")
 
     frame = candles.copy()
     original_count = len(frame)
@@ -94,7 +97,8 @@ def audit_candles(
                     })
 
     structurally_valid = (
-        bad_timestamps == 0
+        original_count > 0
+        and bad_timestamps == 0
         and duplicate_count == 0
         and out_of_order_count == 0
         and invalid_ohlc_count == 0

@@ -147,8 +147,8 @@ def resample_ohlc_to_interval(
         "complete_bar_coverage_ratio_over_time_span": (
             complete_count / span_buckets if span_buckets else 0.0
         ),
-        "start_timestamp": first_bucket.isoformat(),
-        "end_timestamp": last_bucket.isoformat(),
+        "source_time_span_start_bucket": first_bucket.isoformat(),
+        "source_time_span_end_bucket": last_bucket.isoformat(),
         "incomplete_examples": incomplete_examples,
         "notes": [
             "Only target intervals containing every expected source candle are emitted.",
@@ -269,9 +269,19 @@ def main(argv: list[str] | None = None) -> int:
                 "only_complete_target_bars": True,
             },
             outputs={"resampled_ohlc": output, "quality_report": report_path},
+            additional_sources={
+                "resampled_ohlc_output": output,
+                "quality_report_json": report_path,
+            },
             rows=int(len(resampled)),
-            start_timestamp=report["start_timestamp"] if not resampled.empty else None,
-            end_timestamp=report["end_timestamp"] if not resampled.empty else None,
+            start_timestamp=(
+                resampled["timestamp"].iloc[0].isoformat()
+                if not resampled.empty else None
+            ),
+            end_timestamp=(
+                resampled["timestamp"].iloc[-1].isoformat()
+                if not resampled.empty else None
+            ),
             summary={
                 "complete_target_bars_written": report["complete_target_bars_written"],
                 "incomplete_target_buckets_excluded": report["incomplete_target_buckets_excluded"],

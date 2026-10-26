@@ -38,6 +38,14 @@ def test_cli_walk_forward_writes_trades_and_fold_summary(tmp_path, capsys):
     assert code == 0
     assert output["mode"] == "walk_forward_research_only"
     assert output["folds"] == 3
+    assert output["coverage_basis"] == "out_of_sample_test_folds_only"
+    assert output["candidate_signals"] == int(pd.read_csv(summary)["candidate_signals"].sum())
+    assert (
+        output["eligible_candidate_signals"]
+        + output["excluded_due_to_timestamp_gaps"]
+        + output["excluded_due_to_missing_future_bars"]
+        == output["candidate_signals"]
+    )
     assert results.exists()
     assert summary.exists()
     assert len(pd.read_csv(summary)) == 3
@@ -48,6 +56,8 @@ def test_cli_walk_forward_writes_trades_and_fold_summary(tmp_path, capsys):
     assert saved_manifest["dataset"]["rows"] == 10
     assert saved_manifest["parameters"]["lookback"] == 2
     assert saved_manifest["summary"]["folds"] == 3
+    assert saved_manifest["summary"]["candidate_signals"] == output["candidate_signals"]
+    assert saved_manifest["summary"]["candidate_coverage_ratio"] == output["candidate_coverage_ratio"]
 
 
 def test_cli_requires_walk_forward_window_sizes(tmp_path, capsys):

@@ -38,6 +38,12 @@ The command generates a temporary set of deliberately synthetic OHLC candles and
 
 A successful result reports `status: passed`, the checks completed, and `orders_submitted: 0`. This is a software integration check only: the candles are synthetic, and passing the check does not demonstrate a profitable strategy or parity with any broker's OTC prices. GitHub Actions runs this command before the unit-test suite on Python 3.11 and 3.12.
 
+## Run manifests and reproducibility
+
+Each `bpr02` run writes a JSON manifest (default: `bpr02_run_manifest.json`; override it with `--manifest-output path/to/manifest.json`). It includes the source file's SHA-256 fingerprint and byte size, the normalized dataset row count and timestamp range, all strategy/evaluation parameters, output paths, and a compact result summary. The data-audit mode also writes a manifest, including when the audit finds structural problems.
+
+Keep the input CSV and its manifest together when archiving research results. If the source file's hash changes, it is not the same input dataset. The manifest does not establish where prices came from, prove OTC parity, or validate profitability. The CLI also refuses manifest paths that would overwrite the input or run outputs.
+
 ## Input CSV
 
 The CSV must contain a timestamp column (one of `timestamp`, `datetime`, `date_time`, `date` or `time`) and numeric `open`, `high`, `low`, `close` columns. Column names are case-insensitive. Timestamps are parsed as UTC; values without a timezone are interpreted as UTC. Extra columns are preserved. Rows are sorted chronologically, while duplicate timestamps and invalid OHLC ranges are rejected.

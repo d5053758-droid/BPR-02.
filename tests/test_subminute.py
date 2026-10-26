@@ -220,8 +220,11 @@ def test_seconds_backtest_cli_writes_trade_file_and_two_source_manifest(tmp_path
     assert code == 0
     assert result["mode"] == "seconds_expiry_research_only"
     assert result["orders_submitted"] == 0
+    assert result["model_coverage_gate_passed"] is True
+    assert result["minimum_model_coverage"] == pytest.approx(0.95)
     assert output_path.exists()
     assert manifest["mode"] == "seconds_expiry_research_only"
+    assert manifest["summary"]["model_coverage_gate_passed"] is True
     assert manifest["additional_sources"]["quotes"]["file_name"] == "quotes.csv"
     assert manifest["parameters"]["expiry_seconds"] == 3.0
     assert manifest["parameters"]["quote_source_label"] == "synthetic_test_feed"
@@ -429,3 +432,71 @@ def test_seconds_walk_forward_requires_nonoverlapping_output_paths(tmp_path, cap
     captured = capsys.readouterr()
     assert code == 2
     assert "output paths must be different" in captured.err
+
+
+
+def test_seconds_cli_returns_three_and_saves_outputs_when_model_coverage_is_low(tmp_path, capsys):
+    candles_path = tmp_path / "candles.csv"
+    quotes_path = tmp_path / "quotes.csv"
+    output_path = tmp_path / "trades.csv"
+    manifest_path = tmp_path / "manifest.json"
+
+    # Two consecutive sweep/reclaim lows with a short lookback create two candidates.
+    pd.DataFrame({
+        "timestamp": pd.date_range("2025-01-01T00:00:00Z", periods=5, freq="min"),
+        "open": [10.0, 10.0, 9.2, 8.8, 8.8],
+        "high": [11.0, 11.5, 10.0, 9.5, 9.2],
+        "low": [9.0, 9.5, 8.5, 8.0, 8.2],
+        "close": [10.0, 10.0, 9.2, 8.8, 8.9],
+    }).to_csv(candles_path, index=False)
+    quotes([
+        ("2025-01-01T00:03:00Z", 8.9),
+        ("2025-01-01T00:03:03Z", 9.0),
+    ]).to_csv(quotes_path, index=False)
+
+    code = main([
+        str(candles_path), str(quotes_path),
+        "--lookback", "2",
+        "--expiry-seconds", "3",
+        "--max-quote-delay-seconds", "0",
+        "--min-model-coverage", "0.95",
+        "--output", str(output_path),
+        "--manifest-output", str(manifest_path),
+        "--quote-source-label", "sparse_test_feed",
+    ])
+    captured = capsys.readouterr()
+    result = json.loads(captured.out)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert result["candidate_signals"] == 2
+    assert result["modeled_trades"] == 1
+    assert result["unmodeled_signals"] == 1
+    assert result["model_coverage_gate_passed"] is False
+    assert code == 3
+    assert "MODEL COVERAGE THRESHOLD NOT MET" in captured.err
+    assert output_path.exists()
+    assert manifest["summary"]["model_coverage_gate_passed"] is False
+
+
+@pytest.mark.parametrize("minimum", [-0.01, 1.01, float("nan"), float("inf")])
+def test_seconds_cli_rejects_invalid_model_coverage_threshold(tmp_path, capsys, minimum):
+    candles_path = tmp_path / "candles.csv"
+    quotes_path = tmp_path / "quotes.csv"
+    candles_path.write_text(
+        "timestamp,open,high,low,close\n"
+        "2025-01-01T00:00:00Z,1.1,1.2,1.0,1.1\n"
+        "2025-01-01T00:01:00Z,1.1,1.2,1.0,1.1\n",
+        encoding="utf-8",
+    )
+    quotes_path.write_text(
+        "timestamp,price\n2025-01-01T00:01:00Z,1.1\n",
+        encoding="utf-8",
+    )
+    code = main([
+        str(candles_path), str(quotes_path),
+        "--min-model-coverage", str(minimum),
+        "--output", str(tmp_path / "trades.csv"),
+        "--manifest-output", str(tmp_path / "manifest.json"),
+    ])
+    captured = capsys.readouterr()
+    assert code == 2
+    assert "--min-model-coverage" in captured.err

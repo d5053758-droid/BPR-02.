@@ -54,6 +54,10 @@ Options:
 
 The command writes a trade-level CSV and prints a JSON summary. No compounding, martingale, commissions, latency, variable payout, quote-provider differences or platform-specific settlement rules are modeled.
 
+## Chronological evaluation helpers
+
+Use `chronological_split(frame, train_fraction=0.70)` to reserve the later portion of data as a test set without shuffling. Use `expanding_window_splits(n_rows, initial_train_size=..., test_size=...)` to build multiple expanding training windows and later, non-overlapping test blocks. These helpers create partitions only; they do not fit strategies or automatically prevent a caller from using test results to tune parameters. Keep model selection and final evaluation data separate.
+
 ## Important limitations
 
 - Historical simulation is not a guarantee of future results.
@@ -68,5 +72,6 @@ The command writes a trade-level CSV and prints a JSON summary. No compounding, 
 - `bpr02/indicators.py`: EMA and simple rolling ATR.
 - `bpr02/signals.py`: experimental sweep/reclaim candidates and reasons.
 - `bpr02/backtest.py`: fixed-expiry simulation and metrics.
+- `bpr02/evaluation.py`: chronological train/test and expanding walk-forward splits.
 - `bpr02/cli.py`: command-line interface.
 - `tests/`: regression tests.

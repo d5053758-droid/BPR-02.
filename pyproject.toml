@@ -22,6 +22,7 @@ bpr02-seconds-backtest = "bpr02.subminute:main"
 bpr02-quote-audit = "bpr02.quote_audit:main"
 bpr02-otc-data = "bpr02.otc_data:main"
 bpr02-resample-candles = "bpr02.resample:main"
+bpr02-readiness = "bpr02.readiness:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -72,7 +72,7 @@ def _validate_backtest_inputs(
         [numeric["open"], numeric["close"], numeric["high"]], axis=1
     ).min(axis=1)
     if (bad_high | bad_low).any():
-        rows = [int(index) + 1 for index in candles.index[bad_high | bad_low][:5]]
+        rows = [position + 1 for position, is_invalid in enumerate((bad_high | bad_low).to_numpy()) if is_invalid][:5]
         raise ValueError(f"invalid OHLC candle range at row(s): {rows}")
 
     if isinstance(signals, pd.DataFrame):

@@ -58,6 +58,18 @@ timestamp,open,high,low,close
 
 Use a CSV from a source you are permitted to use. Do not commit private account data, API keys, or sensitive historical datasets to this public repository.
 
+## Quote-feed quality preflight
+
+Before interpreting a seconds-expiry backtest, audit the timestamps and sampling gaps in the quote CSV:
+
+```bash
+bpr02-quote-audit quotes.csv --expiry-seconds 3 --target-resolution-fraction 0.25 --output quote_audit.json
+```
+
+The report records the source file's SHA-256 hash, observation count and time span, median/p95/maximum quote interval, and how often gaps exceed the configured threshold. The default target p95 interval is one quarter of the requested expiry; this is a **configurable screening heuristic**, not a universal standard. To enforce an explicit local threshold, add `--max-p95-gap-seconds 0.25`; the command saves the report and exits with status 3 if that threshold is exceeded.
+
+This audit checks temporal resolution only. It does not prove the quotes came from the intended provider, match Pocket Option OTC, include the platform's settlement price, or support a profitable strategy. For three-second research, a dataset that fails the chosen resolution threshold should not be treated as conclusive evidence about outcomes.
+
 ## Research backtests for expiry measured in seconds
 
 The fixed-expiry bar backtester settles at candle closes. For a three-second hypothesis based on M1 signals, use the separate `bpr02-seconds-backtest` command with two files:
@@ -178,6 +190,7 @@ Choose `review` to mark an alert for manual inspection or `ignore` to dismiss it
 - `bpr02/signals.py`: experimental sweep/reclaim candidates and reasons.
 - `bpr02/backtest.py`: fixed-expiry bar simulation and metrics.
 - `bpr02/subminute.py`: second-expiry research using timestamped quote observations; exposed as `bpr02-seconds-backtest`.
+- `bpr02/quote_audit.py`: preflight quote sampling-gap audit, exposed as `bpr02-quote-audit`.
 - `bpr02/evaluation.py`: chronological train/test and expanding walk-forward splits.
 - `bpr02/walkforward.py`: per-fold fixed-expiry simulations and fold metrics.
 - `bpr02/signal_bridge.py`: closed-candle JSONL alert bridge and append-only event log.

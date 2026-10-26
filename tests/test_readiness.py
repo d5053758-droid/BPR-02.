@@ -35,6 +35,7 @@ def test_candle_only_preflight_ready_requires_explicit_interval(tmp_path, capsys
     code = main([
         str(candles),
         "--expected-interval-seconds", "60",
+        "--lookback", "2",
         "--output", str(output),
     ])
     capsys.readouterr()
@@ -91,6 +92,7 @@ def test_seconds_preflight_requires_quote_resolution_and_time_coverage(tmp_path,
         str(candles),
         "--quotes-csv", str(quotes),
         "--expected-interval-seconds", "60",
+        "--lookback", "2",
         "--expiry-seconds", "3",
         "--max-quote-delay-seconds", "1",
         "--output", str(output),
@@ -116,6 +118,7 @@ def test_seconds_preflight_fails_closed_when_quote_history_ends_too_early(tmp_pa
     code = main([
         str(candles), "--quotes-csv", str(quotes),
         "--expected-interval-seconds", "60",
+        "--lookback", "2",
         "--output", str(output),
     ])
     capsys.readouterr()
@@ -141,6 +144,7 @@ def test_seconds_preflight_catches_rare_long_quote_gap_even_when_p95_passes(tmp_
     code = main([
         str(candles), "--quotes-csv", str(quotes),
         "--expected-interval-seconds", "60",
+        "--lookback", "2",
         "--max-quote-p95-gap-seconds", "0.75",
         "--max-quote-gap-seconds", "0.75",
         "--output", str(output),
@@ -174,6 +178,45 @@ def test_maximum_quote_gap_is_visible_but_unenforced_by_default(tmp_path, capsys
     assert "not enforced" in report["gates"]["quote_maximum_gap"]["detail"]
 
 
+
+def test_preflight_requires_enough_rows_for_configured_lookback_and_bar_expiry(tmp_path, capsys):
+    candles = tmp_path / "short_candles.csv"
+    output = tmp_path / "readiness.json"
+    write_candles(candles)
+    code = main([
+        str(candles),
+        "--expected-interval-seconds", "60",
+        "--lookback", "12",
+        "--expiry-bars", "1",
+        "--output", str(output),
+    ])
+    capsys.readouterr()
+    report = json.loads(output.read_text(encoding="utf-8"))
+    assert code == 3
+    assert report["parameters"]["minimum_required_candle_rows"] == 14
+    assert report["gates"]["minimum_strategy_history"]["passed"] is False
+
+
+def test_seconds_mode_needs_lookback_history_but_not_an_extra_settlement_bar(tmp_path, capsys):
+    candles = tmp_path / "candles.csv"
+    quotes = tmp_path / "quotes.csv"
+    output = tmp_path / "readiness.json"
+    write_candles(candles)
+    write_quotes(quotes)
+    code = main([
+        str(candles), "--quotes-csv", str(quotes),
+        "--expected-interval-seconds", "60",
+        "--lookback", "3",
+        "--expiry-seconds", "3",
+        "--output", str(output),
+    ])
+    capsys.readouterr()
+    report = json.loads(output.read_text(encoding="utf-8"))
+    assert report["parameters"]["minimum_required_candle_rows"] == 4
+    assert report["gates"]["minimum_strategy_history"]["passed"] is True
+    assert code == 0
+
+
 def test_preflight_rejects_output_overwriting_input(tmp_path, capsys):
     candles = tmp_path / "candles.csv"
     write_candles(candles)
@@ -195,6 +238,8 @@ def test_preflight_rejects_output_overwriting_input(tmp_path, capsys):
         ({"max_quote_p95_gap_seconds": -1}, "max_quote_p95_gap_seconds"),
         ({"max_quote_gap_seconds": -1}, "max_quote_gap_seconds"),
         ({"max_quote_delay_seconds": -1}, "max_quote_delay_seconds"),
+        ({"lookback": 1}, "lookback"),
+        ({"expiry_bars": 0}, "expiry_bars"),
         ({"bar_timestamp_label": "middle"}, "bar_timestamp_label"),
     ],
 )

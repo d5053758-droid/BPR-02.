@@ -141,6 +141,19 @@ The report records the source file's SHA-256 hash, observation count and time sp
 
 This audit checks temporal resolution only. It does not prove the quotes came from the intended provider, match Pocket Option OTC, include the platform's settlement price, or support a profitable strategy. For three-second research, a dataset that fails the chosen resolution threshold should not be treated as conclusive evidence about outcomes.
 
+## First real-data run (one request)
+
+From the repository root in Codespaces, install the project once and run the starter script:
+
+```bash
+python -m pip install -e ".[test]"
+bash scripts/first_otc_data_run.sh
+```
+
+The script asks for the OTCharts key with hidden terminal input, sends exactly one historical candle request for `EURUSD_otc` at five-second resolution, saves a CSV and JSON acquisition sidecar, then runs the readiness preflight against those exact files. It refuses to overwrite existing output files; rename them or set different `BPR02_CANDLES_OUTPUT`, `BPR02_FETCH_REPORT_OUTPUT`, or `BPR02_READINESS_OUTPUT` paths. The API key is not embedded in commands or written to the reports, and the script unsets it after the request. Never paste the key into this chat, a source file, or a GitHub commit.
+
+The result is a data-quality experiment, not a signal run. If readiness exits with code 3, open the JSON report and fix or deliberately review the failed gate before backtesting. A provider-reported closed status is historical metadata, not proof that the instrument is currently tradable. No orders are sent.
+
 ## Optional read-only OTC data capture
 
 BPR-02 includes an optional adapter for the **third-party OTCharts market-data API**. It is not an official Pocket Option API, it cannot place orders, and it never needs a Pocket Option login/session. Read the provider's current [API documentation](https://otcharts.com/api) and [Pocket Option data page](https://otcharts.com/es/pocket-option-api) before use. Pocket Option's own [public offer](https://pocketoption.com/es/public-offer) says it reserves the right to review results for operations performed with unauthorized bot software, so this adapter stays read-only.

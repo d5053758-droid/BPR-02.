@@ -371,6 +371,209 @@ def backtest_seconds_expiry(
     return results, diagnostics
 
 
+
+def run_seconds_walk_forward(
+    signal_candles: pd.DataFrame,
+    signals: pd.Series | pd.DataFrame,
+    quotes: pd.DataFrame,
+    *,
+    initial_train_size: int,
+    test_size: int,
+    step_size: int | None = None,
+    bar_seconds: float = 60.0,
+    bar_timestamp_label: BarTimestampLabel = "open",
+    expiry_seconds: float = 3.0,
+    entry_delay_seconds: float = 0.0,
+    max_quote_delay_seconds: float = 1.0,
+    payout: float = 0.80,
+    stake: float = 1.0,
+    tie_policy: TiePolicy = "push",
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, int | float | str | None]]:
+    """Evaluate a fixed second-expiry rule on future-only, non-overlapping folds.
+
+    The strategy rule is not fitted or optimized within folds. The earlier rows
+    supply chronological context; each reported fold contains signals from a
+    strictly later test block. Signals must be computed causally from current
+    and past candles only. Quotes are sliced per fold, with one later observation
+    retained to classify a missing timely quote as stale instead of fabricating
+    a fill.
+
+    Returns (out-of-sample trades, fold metrics, aggregate diagnostics). This
+    function is research-only and does not contact a broker or submit orders.
+    """
+    from .evaluation import expanding_window_splits
+
+    if step_size is not None and step_size < test_size:
+        raise ValueError("step_size must be >= test_size to avoid overlapping test folds")
+    candles, series = _validate_candles_and_signals(signal_candles, signals)
+    quote_frame = _validate_quote_frame(quotes)
+    timestamps = pd.to_datetime(candles["timestamp"], errors="raise", utc=True)
+    splits = expanding_window_splits(
+        len(candles),
+        initial_train_size=initial_train_size,
+        test_size=test_size,
+        step_size=step_size,
+    )
+    bars_seconds = _as_finite_number(bar_seconds, "bar_seconds", minimum=0, inclusive=False)
+    expiry = _as_finite_number(expiry_seconds, "expiry_seconds", minimum=0, inclusive=False)
+    entry_delay = _as_finite_number(
+        entry_delay_seconds, "entry_delay_seconds", minimum=0, inclusive=True
+    )
+    max_delay = _as_finite_number(
+        max_quote_delay_seconds, "max_quote_delay_seconds", minimum=0, inclusive=True
+    )
+    if bar_timestamp_label not in ("open", "close"):
+        raise ValueError("bar_timestamp_label must be 'open' or 'close'")
+    if isinstance(payout, bool) or not isinstance(payout, (int, float)) or not math.isfinite(float(payout)) or not 0 <= float(payout) <= 1:
+        raise ValueError("payout must be a finite number between 0 and 1")
+    stake_value = _as_finite_number(stake, "stake", minimum=0, inclusive=False)
+    if tie_policy not in ("push", "loss"):
+        raise ValueError("tie_policy must be 'push' or 'loss'")
+
+    quote_times = pd.DatetimeIndex(quote_frame["timestamp"])
+    trade_tables: list[pd.DataFrame] = []
+    metric_rows: list[dict[str, object]] = []
+    counter_names = (
+        "no_entry_quote",
+        "stale_entry_quote",
+        "no_settlement_quote",
+        "stale_settlement_quote",
+    )
+
+    for fold_number, (train_slice, test_slice) in enumerate(splits, start=1):
+        test_candles = candles.iloc[test_slice].reset_index(drop=True)
+        test_signals = series.iloc[test_slice].reset_index(drop=True)
+        test_start = pd.Timestamp(test_candles["timestamp"].iloc[0])
+        test_end = pd.Timestamp(test_candles["timestamp"].iloc[-1])
+        availability_end = (
+            test_end + pd.to_timedelta(bars_seconds, unit="s")
+            if bar_timestamp_label == "open"
+            else test_end
+        )
+        quote_end = (
+            availability_end
+            + pd.to_timedelta(entry_delay + expiry + max_delay, unit="s")
+        )
+        quote_start_index = int(quote_times.searchsorted(test_start, side="left"))
+        quote_end_index = int(quote_times.searchsorted(quote_end, side="right"))
+        if quote_end_index < len(quote_frame):
+            quote_end_index += 1  # Keep one observation beyond the tolerance boundary as a stale-quote sentinel.
+        quote_subset = quote_frame.iloc[quote_start_index:quote_end_index].reset_index(drop=True)
+
+        if quote_subset.empty:
+            candidate_count = int(test_signals.isin([CALL, PUT]).sum())
+            empty_columns = [
+                "signal_bar_timestamp", "signal_available_at", "direction",
+                "entry_target_timestamp", "entry_timestamp", "entry_quote_delay_seconds",
+                "entry_price", "expiry_target_timestamp", "settlement_timestamp",
+                "settlement_quote_delay_seconds", "settlement_price", "outcome",
+                "stake", "payout", "pnl", "cumulative_pnl",
+            ]
+            fold_trades = pd.DataFrame(columns=empty_columns)
+            fold_diagnostics: dict[str, int | float | str | None] = {
+                "signal_candles": len(test_candles),
+                "candidate_signals": candidate_count,
+                "modeled_trades": 0,
+                "unmodeled_signals": candidate_count,
+                "modeled_signal_fraction": 0.0 if candidate_count else None,
+                "quote_observations": 0,
+                "quote_start_timestamp": None,
+                "quote_end_timestamp": None,
+                "quote_span_seconds": 0.0,
+                "quote_gap_median_seconds": None,
+                "quote_gap_p95_seconds": None,
+                "quote_gap_max_seconds": None,
+                "no_entry_quote": candidate_count,
+                "stale_entry_quote": 0,
+                "no_settlement_quote": 0,
+                "stale_settlement_quote": 0,
+                "bar_seconds": bars_seconds,
+                "bar_timestamp_label": bar_timestamp_label,
+                "expiry_seconds": expiry,
+                "entry_delay_seconds": entry_delay,
+                "max_quote_delay_seconds": max_delay,
+                "payout": float(payout),
+                "stake": stake_value,
+                "tie_policy": tie_policy,
+            }
+        else:
+            fold_trades, fold_diagnostics = backtest_seconds_expiry(
+                test_candles,
+                test_signals,
+                quote_subset,
+                bar_seconds=bars_seconds,
+                bar_timestamp_label=bar_timestamp_label,
+                expiry_seconds=expiry,
+                entry_delay_seconds=entry_delay,
+                max_quote_delay_seconds=max_delay,
+                payout=float(payout),
+                stake=stake_value,
+                tie_policy=tie_policy,
+            )
+
+        fold_trades = fold_trades.copy()
+        fold_trades.insert(0, "fold", fold_number)
+        trade_tables.append(fold_trades)
+        metrics = summarize_results(fold_trades)
+        metric_rows.append({
+            "fold": fold_number,
+            "training_rows": train_slice.stop,
+            "test_rows": test_slice.stop - test_slice.start,
+            "training_end": timestamps.iloc[train_slice.stop - 1],
+            "test_start": test_start,
+            "test_end": test_end,
+            **fold_diagnostics,
+            **metrics,
+        })
+
+    all_trades = (
+        pd.concat(trade_tables, ignore_index=True)
+        if trade_tables
+        else pd.DataFrame()
+    )
+    fold_metrics = pd.DataFrame(metric_rows)
+    total_candidates = int(fold_metrics["candidate_signals"].sum())
+    modeled_trades = int(len(all_trades))
+    aggregate_counters = {
+        name: int(fold_metrics[name].sum())
+        for name in counter_names
+    }
+    global_intervals = quote_times.to_series().diff().dt.total_seconds().dropna()
+    quote_span = (
+        float((quote_times[-1] - quote_times[0]).total_seconds())
+        if len(quote_times) >= 2
+        else 0.0
+    )
+    aggregate_diagnostics: dict[str, int | float | str | None] = {
+        "signal_candles": int(fold_metrics["test_rows"].sum()),
+        "candidate_signals": total_candidates,
+        "modeled_trades": modeled_trades,
+        "unmodeled_signals": total_candidates - modeled_trades,
+        "modeled_signal_fraction": modeled_trades / total_candidates if total_candidates else None,
+        "quote_observations": len(quote_frame),
+        "quote_start_timestamp": quote_times[0].isoformat(),
+        "quote_end_timestamp": quote_times[-1].isoformat(),
+        "quote_span_seconds": quote_span,
+        "quote_gap_median_seconds": float(global_intervals.median()) if not global_intervals.empty else None,
+        "quote_gap_p95_seconds": float(global_intervals.quantile(0.95)) if not global_intervals.empty else None,
+        "quote_gap_max_seconds": float(global_intervals.max()) if not global_intervals.empty else None,
+        **aggregate_counters,
+        "bar_seconds": bars_seconds,
+        "bar_timestamp_label": bar_timestamp_label,
+        "expiry_seconds": expiry,
+        "entry_delay_seconds": entry_delay,
+        "max_quote_delay_seconds": max_delay,
+        "payout": float(payout),
+        "stake": stake_value,
+        "tie_policy": tie_policy,
+        "walk_forward_folds": len(fold_metrics),
+        "initial_train_size": initial_train_size,
+        "test_size": test_size,
+        "step_size": test_size if step_size is None else step_size,
+        "orders_submitted": 0,
+    }
+    return all_trades, fold_metrics, aggregate_diagnostics
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="bpr02-seconds-backtest",

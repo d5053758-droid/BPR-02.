@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from math import isfinite
+from pathlib import Path
 
 import pandas as pd
 
@@ -124,3 +125,57 @@ def audit_candles(
             "This report does not verify parity with Pocket Option OTC prices or settlement.",
         ],
     }
+
+
+def audit_csv_file(
+    path: str | Path,
+    *,
+    expected_interval_seconds: float | None = None,
+    max_gap_examples: int = 20,
+) -> dict[str, object]:
+    """Audit a raw CSV in its original row order before strict loading/sorting."""
+    source = Path(path)
+    raw = pd.read_csv(source)
+    raw = raw.rename(columns={column: str(column).strip().lower() for column in raw.columns})
+    aliases = ("timestamp", "datetime", "date_time", "date", "time")
+    timestamp_column = next((column for column in aliases if column in raw.columns), None)
+    missing = [column for column in ("open", "high", "low", "close") if column not in raw.columns]
+    if timestamp_column is None:
+        missing.insert(0, "timestamp (alias: datetime/date_time/date/time)")
+    if missing:
+        return {
+            "source_file": str(source),
+            "rows": len(raw),
+            "missing_columns": missing,
+            "structurally_valid": False,
+            "issues": [f"Missing required column(s): {', '.join(missing)}"],
+            "warnings": [],
+        }
+
+    raw = raw.rename(columns={timestamp_column: "timestamp"})
+    report = audit_candles(
+        raw,
+        expected_interval_seconds=expected_interval_seconds,
+        max_gap_examples=max_gap_examples,
+    )
+    issues: list[str] = []
+    if report["timestamp_parse_errors"]:
+        issues.append(f"Timestamp parse errors: {report['timestamp_parse_errors']}")
+    if report["duplicate_timestamps"]:
+        issues.append(f"Duplicate timestamps: {report['duplicate_timestamps']}")
+    if report["out_of_order_steps"]:
+        issues.append(f"Out-of-order timestamp steps: {report['out_of_order_steps']}")
+    if report["invalid_ohlc_rows"]:
+        issues.append(f"Invalid OHLC rows: {report['invalid_ohlc_rows']}")
+
+    warnings: list[str] = []
+    if report["gaps_over_1_5x_interval"]:
+        warnings.append(
+            f"Detected {report['gaps_over_1_5x_interval']} large time gap(s); "
+            f"estimated missing bars: {report['estimated_missing_bars']}."
+        )
+    report["source_file"] = str(source)
+    report["issues"] = issues
+    report["warnings"] = warnings
+    report["missing_columns"] = []
+    return report

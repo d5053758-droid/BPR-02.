@@ -299,6 +299,10 @@ def test_fetch_historical_candles_uses_one_read_only_request_and_writes_utc_csv(
     assert result["output_candles"] == 2
     assert result["rows_reordered_to_chronology"] == 1
     assert result["timeframe_seconds"] == 5
+    assert result["provider_interval"] == "5s"
+    assert result["provider_interval_seconds"] == 5
+    assert result["observed_irregular_spacing_intervals"] == 0
+    assert result["observed_large_gap_runs"] == 0
     assert result["source_clock_ahead_seconds_subtracted"] == 7200
     assert result["instrument_open"] is None
     assert result["instrument_status"] == "not_reported"
@@ -352,6 +356,75 @@ def test_fetch_historical_candles_rejects_malformed_provider_open_status(tmp_pat
             urlopen_fn=lambda *args, **kwargs: io.BytesIO(json.dumps(payload).encode("utf-8")),
         )
     assert not (tmp_path / "bad_status.csv").exists()
+
+
+
+def test_fetch_historical_candles_rejects_provider_interval_mismatch(tmp_path):
+    payload = {
+        "symbol": "EURUSD_otc",
+        "count": 2,
+        "interval": "60s",
+        "candles": [
+            {"time": 1788103260, "open": 1.1, "high": 1.2, "low": 1.0, "close": 1.1},
+            {"time": 1788103265, "open": 1.1, "high": 1.2, "low": 1.0, "close": 1.1},
+        ],
+    }
+    with pytest.raises(ValueError, match="60s.*5s was requested"):
+        fetch_historical_candles(
+            api_key="test-key",
+            output_path=tmp_path / "wrong_interval.csv",
+            symbol="EURUSD_otc",
+            timeframe_seconds=5,
+            limit=2,
+            urlopen_fn=lambda *args, **kwargs: io.BytesIO(json.dumps(payload).encode("utf-8")),
+        )
+    assert not (tmp_path / "wrong_interval.csv").exists()
+
+
+def test_fetch_historical_candles_rejects_unparseable_provider_interval(tmp_path):
+    payload = {
+        "symbol": "EURUSD_otc",
+        "interval": "M1",
+        "candles": [
+            {"time": 1788103260, "open": 1.1, "high": 1.2, "low": 1.0, "close": 1.1},
+        ],
+    }
+    with pytest.raises(ValueError, match="unsupported candle interval"):
+        fetch_historical_candles(
+            api_key="test-key",
+            output_path=tmp_path / "bad_interval.csv",
+            symbol="EURUSD_otc",
+            timeframe_seconds=60,
+            limit=1,
+            urlopen_fn=lambda *args, **kwargs: io.BytesIO(json.dumps(payload).encode("utf-8")),
+        )
+    assert not (tmp_path / "bad_interval.csv").exists()
+
+
+def test_fetch_historical_candles_reports_spacing_gaps_in_provider_page(tmp_path):
+    output = tmp_path / "gapped_candles.csv"
+    payload = {
+        "symbol": "EURUSD_otc",
+        "interval": "5s",
+        "count": 3,
+        "candles": [
+            {"time": 1788103260, "open": 1.1, "high": 1.2, "low": 1.0, "close": 1.1},
+            {"time": 1788103265, "open": 1.1, "high": 1.2, "low": 1.0, "close": 1.1},
+            {"time": 1788103280, "open": 1.1, "high": 1.2, "low": 1.0, "close": 1.1},
+        ],
+    }
+    result = fetch_historical_candles(
+        api_key="test-key",
+        output_path=output,
+        symbol="EURUSD_otc",
+        timeframe_seconds=5,
+        limit=3,
+        urlopen_fn=lambda *args, **kwargs: io.BytesIO(json.dumps(payload).encode("utf-8")),
+    )
+    assert result["provider_interval_seconds"] == 5
+    assert result["observed_irregular_spacing_intervals"] == 1
+    assert result["observed_large_gap_runs"] == 1
+    assert result["estimated_missing_bars_from_timestamps"] == 2
 
 
 def test_fetch_historical_candles_validates_request_and_refuses_overwrite(tmp_path):

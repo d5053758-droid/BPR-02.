@@ -3,7 +3,7 @@ import json
 import pandas as pd
 import pytest
 
-from bpr02.subminute import backtest_seconds_expiry, load_quote_csv, main
+from bpr02.subminute import backtest_seconds_expiry, load_quote_csv, main, run_seconds_walk_forward
 
 
 def signal_candles(timestamps=None):
@@ -277,3 +277,155 @@ def test_seconds_cli_requires_descriptive_quote_source_label(tmp_path, capsys):
     captured = capsys.readouterr()
     assert code == 2
     assert "--quote-source-label" in captured.err
+
+
+
+def test_seconds_walk_forward_uses_nonoverlapping_future_only_blocks():
+    candles = pd.DataFrame({
+        "timestamp": pd.date_range("2025-01-01T00:00:00Z", periods=8, freq="min"),
+        "open": [1.1] * 8,
+        "high": [1.101] * 8,
+        "low": [1.099] * 8,
+        "close": [1.1005] * 8,
+    })
+    labels = pd.Series([
+        "NO TRADE", "NO TRADE", "CALL", "PUT",
+        "NO TRADE", "CALL", "PUT", "NO TRADE",
+    ])
+    quote_times = pd.date_range("2025-01-01T00:00:00Z", periods=10 * 60, freq="s")
+    quote_data = pd.DataFrame({
+        "timestamp": quote_times,
+        "price": [1.1000 + i * 0.000001 for i in range(len(quote_times))],
+    })
+
+    trades, folds, diagnostics = run_seconds_walk_forward(
+        candles, labels, quote_data,
+        initial_train_size=2, test_size=2, step_size=2,
+        expiry_seconds=3, max_quote_delay_seconds=0,
+    )
+
+    assert folds["fold"].tolist() == [1, 2, 3]
+    assert folds["training_rows"].tolist() == [2, 4, 6]
+    assert folds["test_rows"].tolist() == [2, 2, 2]
+    assert (folds["training_end"] < folds["test_start"]).all()
+    assert diagnostics["walk_forward_folds"] == 3
+    assert diagnostics["candidate_signals"] == 4
+    assert diagnostics["modeled_trades"] == 4
+    assert diagnostics["unmodeled_signals"] == 0
+    assert trades["fold"].tolist() == [1, 1, 2, 3]
+    boundaries = folds.set_index("fold")
+    for _, trade in trades.iterrows():
+        fold = boundaries.loc[trade["fold"]]
+        assert trade["signal_bar_timestamp"] >= fold["test_start"]
+        assert trade["signal_bar_timestamp"] <= fold["test_end"]
+
+
+def test_seconds_walk_forward_rejects_overlapping_test_folds():
+    candles = signal_candles()
+    labels = pd.Series(["CALL", "NO TRADE"])
+    quote_data = quotes([("2025-01-01T00:01:00Z", 1.1)])
+    with pytest.raises(ValueError, match="step_size must be >= test_size"):
+        run_seconds_walk_forward(
+            candles, labels, quote_data,
+            initial_train_size=2, test_size=2, step_size=1,
+        )
+
+
+def test_seconds_walk_forward_counts_missing_fold_quotes_without_fabricating_trades():
+    candles = pd.DataFrame({
+        "timestamp": pd.date_range("2025-01-01T00:00:00Z", periods=4, freq="min"),
+        "open": [1.1] * 4,
+        "high": [1.101] * 4,
+        "low": [1.099] * 4,
+        "close": [1.1005] * 4,
+    })
+    labels = pd.Series(["NO TRADE", "NO TRADE", "CALL", "PUT"])
+    # Valid quotes exist, but all occur before the first OOS signal can be available.
+    quote_data = quotes([
+        ("2025-01-01T00:00:00Z", 1.1),
+        ("2025-01-01T00:00:01Z", 1.1001),
+    ])
+    trades, folds, diagnostics = run_seconds_walk_forward(
+        candles, labels, quote_data,
+        initial_train_size=2, test_size=2, expiry_seconds=3,
+    )
+    assert trades.empty
+    assert len(folds) == 1
+    assert diagnostics["candidate_signals"] == 2
+    assert diagnostics["modeled_trades"] == 0
+    assert diagnostics["no_entry_quote"] == 2
+    assert diagnostics["unmodeled_signals"] == 2
+
+
+def test_seconds_walk_forward_cli_writes_oos_results_and_fold_manifest(tmp_path, capsys):
+    candles_path = tmp_path / "candles.csv"
+    quotes_path = tmp_path / "quotes.csv"
+    output_path = tmp_path / "oos-trades.csv"
+    fold_path = tmp_path / "folds.csv"
+    manifest_path = tmp_path / "oos-manifest.json"
+    candle_times = pd.date_range("2025-01-01T00:00:00Z", periods=8, freq="min")
+    pd.DataFrame({
+        "timestamp": candle_times,
+        "open": [1.1] * 8,
+        "high": [1.101, 1.101, 1.101, 1.100, 1.101, 1.101, 1.102, 1.101],
+        "low": [1.099, 1.0995, 1.0992, 1.098, 1.0985, 1.099, 1.098, 1.099],
+        "close": [1.100, 1.1002, 1.0997, 1.0998, 1.1001, 1.1002, 1.1001, 1.1002],
+    }).to_csv(candles_path, index=False)
+    quote_times = pd.date_range("2025-01-01T00:00:00Z", periods=10 * 60, freq="s")
+    pd.DataFrame({
+        "timestamp": quote_times,
+        "price": [1.1000 + i * 0.000001 for i in range(len(quote_times))],
+    }).to_csv(quotes_path, index=False)
+
+    code = main([
+        str(candles_path), str(quotes_path),
+        "--lookback", "2",
+        "--expiry-seconds", "3",
+        "--max-quote-delay-seconds", "0",
+        "--walk-forward",
+        "--initial-train-size", "2",
+        "--test-size", "2",
+        "--step-size", "2",
+        "--output", str(output_path),
+        "--fold-summary", str(fold_path),
+        "--manifest-output", str(manifest_path),
+        "--quote-source-label", "synthetic_test_feed",
+    ])
+
+    result = json.loads(capsys.readouterr().out)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    fold_rows = pd.read_csv(fold_path)
+    assert code == 0
+    assert result["mode"] == "seconds_expiry_walk_forward_research_only"
+    assert result["orders_submitted"] == 0
+    assert result["folds"] == 3
+    assert result["candidate_signals"] >= 1
+    assert output_path.exists()
+    assert len(fold_rows) == 3
+    assert manifest["parameters"]["walk_forward"] is True
+    assert manifest["outputs"]["fold_summary_csv"] == str(fold_path)
+    assert manifest["summary"]["walk_forward_folds"] == 3
+
+
+def test_seconds_walk_forward_requires_nonoverlapping_output_paths(tmp_path, capsys):
+    candles_path = tmp_path / "candles.csv"
+    quotes_path = tmp_path / "quotes.csv"
+    candles_path.write_text(
+        "timestamp,open,high,low,close\n"
+        "2025-01-01T00:00:00Z,1.1,1.2,1.0,1.1\n",
+        encoding="utf-8",
+    )
+    quotes_path.write_text(
+        "timestamp,price\n2025-01-01T00:01:00Z,1.1\n",
+        encoding="utf-8",
+    )
+    code = main([
+        str(candles_path), str(quotes_path), "--walk-forward",
+        "--initial-train-size", "2", "--test-size", "2",
+        "--output", str(tmp_path / "same.csv"),
+        "--fold-summary", str(tmp_path / "same.csv"),
+        "--manifest-output", str(tmp_path / "manifest.json"),
+    ])
+    captured = capsys.readouterr()
+    assert code == 2
+    assert "output paths must be different" in captured.err

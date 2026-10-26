@@ -74,11 +74,14 @@ This audit checks temporal resolution only. It does not prove the quotes came fr
 
 BPR-02 includes an optional adapter for the **third-party OTCharts market-data API**. It is not a Pocket Option official API and it cannot place orders. The provider documents a read-only stream of OTC ticks, including `EURUSD_otc`, but streaming access may require a plan that includes live streams; check the provider's current access and terms before using it. Do not buy a plan just to run a test: first verify that your existing access actually permits streaming.
 
-Set the provider's own API key in your local shell. Never paste it into chat, commit it to GitHub, or write it into a file:
+Enter the provider's own API key without echoing it to the terminal. Never paste it into chat, commit it to GitHub, or write it into a file:
 
 ```bash
-export OTCHARTS_API_KEY='YOUR_OTCHARTS_KEY'
+read -r -s -p "OTCharts API key: " OTCHARTS_API_KEY
+printf '\\n'
+export OTCHARTS_API_KEY
 bpr02-otc-data record --symbols EURUSD_otc --duration-seconds 1800 --output otc_ticks_raw.jsonl
+unset OTCHARTS_API_KEY
 ```
 
 This records raw server-sent events to JSON Lines and does not log the key. By default it refuses to overwrite an existing capture; use `--append` only when adding another session to the same log. If access is denied, check the provider's plan permissions; the command will not fall back to scraping a browser or using a Pocket Option session token.
@@ -86,11 +89,11 @@ This records raw server-sent events to JSON Lines and does not log the key. By d
 Convert the raw capture into a quote CSV:
 
 ```bash
-bpr02-otc-data convert otc_ticks_raw.jsonl --symbol EURUSD_otc --source-clock-ahead-seconds 7200 --output otc_quotes.csv
+bpr02-otc-data convert otc_ticks_raw.jsonl --symbol EURUSD_otc --output otc_quotes.csv
 bpr02-quote-audit otc_quotes.csv --expiry-seconds 3 --target-resolution-fraction 0.25 --output otc_quote_audit.json
 ```
 
-The adapter preserves the raw source timestamps in the JSONL log. The converter defaults to subtracting 7,200 seconds because OTCharts' published documentation describes the Pocket Option OTC book's clock as two hours ahead; the adjustment is configurable and must be checked against the platform/chart before combining files from different sources. Do not assume this third-party service is affiliated with or endorsed by Pocket Option.
+The adapter preserves the raw source timestamps and the configured clock adjustment in the JSONL log. The converter reuses that recorded adjustment automatically; for older logs without metadata it defaults to subtracting 7,200 seconds because OTCharts' published documentation describes the Pocket Option OTC book's clock as two hours ahead. The adjustment is configurable and must be checked against the platform/chart before combining files from different sources. If the requested conversion offset disagrees with the recorded setting, it stops instead of silently shifting the dataset. Do not assume this third-party service is affiliated with or endorsed by Pocket Option.
 
 **Resolution limitation:** the provider's documented tick examples use whole-second timestamps. When several ticks share the same source second, the converter keeps the last tick for that second. This can be useful for exploratory 3-second research, but it cannot reconstruct subsecond order, network latency, the exact price used by the broker to settle a contract, or the platform's historical execution. A feed from another provider is not a substitute for the platform's own OTC quotes.
 

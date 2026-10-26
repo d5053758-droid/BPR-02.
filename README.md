@@ -60,7 +60,7 @@ Options:
 - `--stake`: fixed hypothetical stake, in arbitrary units.
 - `--tie-policy push|loss`: whether equal entry and expiry prices produce zero P/L or a loss.
 
-The command writes a trade-level CSV and prints a JSON summary, including win rate excluding ties, theoretical break-even win rate for the modeled payout, profit factor, expectancy and maximum drawdown in stake units. These are historical descriptive metrics, not forecasts. No compounding, martingale, commissions, latency, variable payout, quote-provider differences or platform-specific settlement rules are modeled.
+The command writes a trade-level CSV and prints a JSON summary, including win rate excluding ties, a Wilson 95% interval for the observed win proportion, theoretical break-even win rate for the modeled payout, profit factor, expectancy and maximum drawdown in stake units. The interval reflects sampling uncertainty in the win proportion only; it is not proof of profitability or a forecast. These are historical descriptive metrics, not forecasts. No compounding, martingale, commissions, latency, variable payout, quote-provider differences or platform-specific settlement rules are modeled.
 
 ## Chronological evaluation helpers
 

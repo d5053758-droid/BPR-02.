@@ -115,7 +115,7 @@ python -m pip install -e .
 bpr02-stream --lookback 12 --expiry-bars 1 --symbol EURUSD --timeframe M1 --source authorized_demo_feed --events-out events.jsonl
 ```
 
-Paste or pipe complete-candle JSON Lines into standard input (Ctrl+D on Linux/macOS or Ctrl+Z then Enter on Windows ends input). For warm-up, an optional valid history CSV can be supplied with `--history-csv`. The first candles produce `NO TRADE` until enough history exists. Repeated, out-of-order or unfinished candles are rejected. Each event includes `event_id`, timestamp, signal, reason, expiry assumption, and `order_sent: false`.
+Paste or pipe complete-candle JSON Lines into standard input (Ctrl+D on Linux/macOS or Ctrl+Z then Enter on Windows ends input). For warm-up, an optional valid history CSV can be supplied with `--history-csv`. The first candles produce `NO TRADE` until enough history exists. Repeated, out-of-order or unfinished candles are rejected. A bridge instance also rejects changes to symbol, timeframe or source midstream, preventing accidental mixing of instruments or feeds. Each event includes `event_id`, timestamp, signal, reason, expiry assumption, and `order_sent: false`.
 
 To record a manual review (this **does not** submit an order):
 

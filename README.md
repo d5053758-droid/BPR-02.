@@ -131,7 +131,7 @@ Choose `review` to mark an alert for manual inspection or `ignore` to dismiss it
 - This candle-based model cannot establish that an OTC feed matches the source CSV. OTC prices, expiry timestamps, tie rules and payout can differ from the assumptions.
 - The next-open entry is a modeling convention, not a promise of executable fills.
 - Out-of-sample testing, chronological splits, spread/feed checks and sensitivity analysis are still needed before drawing any conclusions.
-- BPR-02 is research-only; it contains no live execution module.
+- BPR-02 is research-only. `bpr02/execution.py` defines a future adapter boundary only; the included `DisabledExecutionAdapter` always rejects requests. No code path submits orders, and this interface is not connected to the signal bridge or CLI. See `docs/FUTURE_EXECUTION_BOUNDARY.md`.
 
 ## Project layout
 
@@ -142,9 +142,11 @@ Choose `review` to mark an alert for manual inspection or `ignore` to dismiss it
 - `bpr02/evaluation.py`: chronological train/test and expanding walk-forward splits.
 - `bpr02/walkforward.py`: per-fold fixed-expiry simulations and fold metrics.
 - `bpr02/signal_bridge.py`: closed-candle JSONL alert bridge and append-only event log.
+- `bpr02/execution.py`: fail-closed interface for a possible future authorized adapter; no live adapter or order submission is implemented.
 - `bpr02/review.py`: append-only manual signal review journal.
 - `bpr02/replay.py`: deterministic historical CSV-to-JSONL test adapter (not live).
 - `docs/FEED_ADAPTER_CONTRACT.md`: data-provider interface contract and connection requirements.
+- `docs/FUTURE_EXECUTION_BOUNDARY.md`: prerequisites, approval boundary and safeguards for any future execution adapter.
 - `bpr02/sensitivity.py`: chronological train/test sensitivity grid for lookback and expiry.
 - `bpr02/audit.py`: timestamp-interval, gap and OHLC diagnostics.
 - `bpr02/cli.py`: command-line interface.

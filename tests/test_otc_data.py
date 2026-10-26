@@ -427,6 +427,59 @@ def test_fetch_historical_candles_reports_spacing_gaps_in_provider_page(tmp_path
     assert result["estimated_missing_bars_from_timestamps"] == 2
 
 
+
+def test_otc_candles_cli_persists_fetch_report_sidecar(tmp_path, monkeypatch, capsys):
+    output = tmp_path / "candles.csv"
+    report_path = tmp_path / "fetch_report.json"
+    monkeypatch.setenv("OTCHARTS_API_KEY", "never-print-this-key")
+
+    from bpr02 import otc_data
+    monkeypatch.setattr(
+        otc_data,
+        "fetch_historical_candles",
+        lambda **kwargs: {
+            "status": "completed",
+            "output_csv": str(output),
+            "output_sha256": "synthetic-test-hash",
+            "instrument_status": "closed",
+            "orders_submitted": 0,
+        },
+    )
+    code = main([
+        "candles", "--output", str(output), "--report-output", str(report_path)
+    ])
+    printed = json.loads(capsys.readouterr().out)
+    saved = json.loads(report_path.read_text(encoding="utf-8"))
+    assert code == 0
+    assert printed["report_output_file"] == str(report_path)
+    assert saved["instrument_status"] == "closed"
+    assert saved["orders_submitted"] == 0
+    assert "never-print-this-key" not in report_path.read_text(encoding="utf-8")
+
+
+def test_otc_candles_cli_sidecar_never_overwrites_or_aliases_output(tmp_path, monkeypatch, capsys):
+    output = tmp_path / "candles.csv"
+    report_path = tmp_path / "fetch_report.json"
+    report_path.write_text("keep me\n", encoding="utf-8")
+    monkeypatch.setenv("OTCHARTS_API_KEY", "test-key")
+
+    from bpr02 import otc_data
+    def no_network(**kwargs):
+        raise AssertionError("must reject paths before the HTTP request")
+    monkeypatch.setattr(otc_data, "fetch_historical_candles", no_network)
+
+    code = main(["candles", "--output", str(output), "--report-output", str(report_path)])
+    assert code == 2
+    assert "refusing to overwrite existing JSON report" in capsys.readouterr().err
+    assert report_path.read_text(encoding="utf-8") == "keep me\n"
+    assert not output.exists()
+
+    code = main(["candles", "--output", str(output), "--report-output", str(output)])
+    assert code == 2
+    assert "must differ from the candle CSV output" in capsys.readouterr().err
+    assert not output.exists()
+
+
 def test_fetch_historical_candles_validates_request_and_refuses_overwrite(tmp_path):
     output = tmp_path / "candles.csv"
     output.write_text("preserve me\n", encoding="utf-8")

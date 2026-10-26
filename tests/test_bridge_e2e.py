@@ -11,12 +11,14 @@ def test_replay_pipe_can_be_consumed_by_signal_bridge_and_reviewed(tmp_path):
     source = tmp_path / "candles.csv"
     event_file = tmp_path / "events.jsonl"
     review_file = tmp_path / "reviews.jsonl"
-    values = [10, 11, 10, 9, 10, 12, 10, 8, 9, 10]
+    values = [10.0, 10.2, 10.1, 9.2, 9.5, 9.4, 9.6, 9.3, 9.5, 9.7]
+    highs = [11.0, 11.0, 11.0, 10.5, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0]
+    lows = [9.0, 9.2, 9.1, 8.8, 9.1, 9.0, 9.2, 9.1, 9.3, 9.4]
     pd.DataFrame({
         "timestamp": pd.date_range("2025-01-01", periods=len(values), freq="min", tz="UTC"),
         "open": values,
-        "high": [value + 1 for value in values],
-        "low": [value - 1 for value in values],
+        "high": highs,
+        "low": lows,
         "close": values,
     }).to_csv(source, index=False)
 

@@ -15,6 +15,7 @@ A provider adapter should only do these things:
 3. Emit one JSON object per line to the standard input of bpr02-stream.
 4. Preserve the provider's symbol/instrument identifier and actual candle-close timestamp.
 5. Report disconnects, stale data, malformed candles and duplicate/out-of-order timestamps without silently inventing prices.
+6. Keep one instrument, timeframe and provider/source per bridge process. Do not concatenate different symbols, OTC/non-OTC instruments, timeframes or providers into one JSONL stream; start a fresh bridge and provide matching warm-up history when changing identity. The bridge rejects identity changes within a stream.
 
 An adapter must not call trading/order endpoints in this project. The bridge outputs research alerts only.
 
@@ -41,7 +42,7 @@ EURUSD_OTC is only an example identifier, not evidence that a feed offers that i
 
     your-authorized-adapter | bpr02-stream --lookback 12 --symbol EURUSD --timeframe M1 --events-out events.jsonl
 
-The adapter's stdout must contain only JSON Lines candle records. Diagnostics belong on stderr. The bridge prints alert events to stdout and appends them to the event log. It rejects incomplete, duplicate, invalid and out-of-order candles.
+The adapter's stdout must contain only JSON Lines candle records. Diagnostics belong on stderr. The bridge prints alert events to stdout and appends them to the event log. It rejects incomplete, duplicate, invalid and out-of-order candles, as well as symbol, timeframe or source changes within one stream.
 
 To test without a live feed:
 

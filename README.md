@@ -63,7 +63,7 @@ To inspect the CSV before strategy testing and report missing-interval estimates
 python -m bpr02 path/to/candles.csv --audit-data --expected-interval-seconds 60 --audit-output data_audit.json
 ```
 
-When no expected interval is supplied, BPR-02 infers the most common positive observed interval (shorter interval wins a tie). Large gaps are estimates, not automatic proof of missing data; sessions and feed behavior can also create gaps. The audit is based on the normalized candle table, so malformed/duplicate input rows are already rejected by CSV loading.
+When no expected interval is supplied, BPR-02 infers the most common positive observed interval (shorter interval wins a tie). Large gaps are estimates, not automatic proof of missing data; sessions and feed behavior can also create gaps. The audit reads the raw CSV in its original row order so it can report duplicate timestamps, out-of-order rows, missing fields and invalid OHLC ranges. The normal backtest importer remains strict and rejects malformed/duplicate input.
 
 This writes one row per lookback/expiry combination and segment (train/test). The grid is a diagnostic, not an automatic optimizer: repeated choices based on the holdout set can overfit it.
 

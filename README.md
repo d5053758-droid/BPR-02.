@@ -1,1 +1,72 @@
-# BPR-02.
+# BPR-02 — research-only fixed-time backtesting
+
+BPR-02 is a Python research scaffold for testing directional CALL/PUT hypotheses on historical OHLC candles. It does **not** connect to Pocket Option, place orders, request credentials, or guarantee profitability.
+
+## Current experimental pipeline
+
+1. Import historical CSV candles and validate timestamps and OHLC ranges.
+2. Calculate EMA and a simple rolling ATR indicator.
+3. Generate an explicitly experimental sweep-and-reclaim candidate signal.
+4. Simulate fixed-time settlement using the next candle's open for entry.
+5. Export trade-level outcomes and simple descriptive metrics.
+
+The sweep-and-reclaim rule is only a starting hypothesis; it has not been established as profitable. Never interpret candidate signals as personalized investment advice.
+
+## Requirements
+
+- Python 3.11 or newer
+- pandas 2.1 or newer, below 4.0
+- pytest for the test suite
+
+Install from the repository root:
+
+```bash
+python -m pip install -e ".[test]"
+python -m pytest
+```
+
+## Input CSV
+
+The CSV must contain a timestamp column (one of `timestamp`, `datetime`, `date_time`, `date` or `time`) and numeric `open`, `high`, `low`, `close` columns. Column names are case-insensitive. Timestamps are parsed as UTC; values without a timezone are interpreted as UTC. Extra columns are preserved. Rows are sorted chronologically, while duplicate timestamps and invalid OHLC ranges are rejected.
+
+Example:
+
+```csv
+timestamp,open,high,low,close
+2025-01-01T00:00:00Z,1.0400,1.0410,1.0390,1.0405
+2025-01-01T00:01:00Z,1.0405,1.0415,1.0400,1.0410
+```
+
+Use a CSV from a source you are permitted to use. Do not commit private account data, API keys, or sensitive historical datasets to this public repository.
+
+## Run a backtest
+
+```bash
+python -m bpr02 path/to/candles.csv --output results.csv --lookback 12 --expiry-bars 1 --payout 0.80 --stake 1
+```
+
+Options:
+- `--lookback`: prior candles in the sweep/reclaim reference range (minimum 2).
+- `--expiry-bars`: candles from entry to settlement (minimum 1). With value 1, entry is at the next candle open and settlement is that candle's close.
+- `--payout`: net profit multiplier for a winning trade; 0.80 means +0.80 units on a one-unit stake.
+- `--stake`: fixed hypothetical stake, in arbitrary units.
+- `--tie-policy push|loss`: whether equal entry and expiry prices produce zero P/L or a loss.
+
+The command writes a trade-level CSV and prints a JSON summary. No compounding, martingale, commissions, latency, variable payout, quote-provider differences or platform-specific settlement rules are modeled.
+
+## Important limitations
+
+- Historical simulation is not a guarantee of future results.
+- This candle-based model cannot establish that an OTC feed matches the source CSV. OTC prices, expiry timestamps, tie rules and payout can differ from the assumptions.
+- The next-open entry is a modeling convention, not a promise of executable fills.
+- Out-of-sample testing, chronological splits, spread/feed checks and sensitivity analysis are still needed before drawing any conclusions.
+- BPR-02 is research-only; it contains no live execution module.
+
+## Project layout
+
+- `bpr02/data.py`: CSV import and validation.
+- `bpr02/indicators.py`: EMA and simple rolling ATR.
+- `bpr02/signals.py`: experimental sweep/reclaim candidates and reasons.
+- `bpr02/backtest.py`: fixed-expiry simulation and metrics.
+- `bpr02/cli.py`: command-line interface.
+- `tests/`: regression tests.

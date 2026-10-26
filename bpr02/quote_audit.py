@@ -153,21 +153,34 @@ def main(argv: list[str] | None = None) -> int:
         report["source_sha256"] = sha256_file(source)
         report["source_bytes"] = source.stat().st_size
         output.parent.mkdir(parents=True, exist_ok=True)
+        threshold = args.max_p95_gap_seconds
+        report["max_p95_gap_seconds"] = threshold
+        report["quality_threshold_enforced"] = threshold is not None
+        if threshold is None:
+            report["quality_threshold_passed"] = None
+            report["all_quality_gates_passed"] = True
+        else:
+            measured_p95 = report["p95_gap_seconds"]
+            report["quality_threshold_passed"] = (
+                measured_p95 is not None and float(measured_p95) <= threshold
+            )
+            report["all_quality_gates_passed"] = report["quality_threshold_passed"]
+
+        # Rewrite after adding gate outcome so the saved report records the exact
+        # pass/fail decision, including the case where p95 cannot be measured.
         output.write_text(
             json.dumps(report, indent=2, ensure_ascii=False, allow_nan=False) + "\n",
             encoding="utf-8",
         )
         print(json.dumps(report, indent=2, ensure_ascii=False, allow_nan=False))
-        if (
-            args.max_p95_gap_seconds is not None
-            and report["p95_gap_seconds"] is not None
-            and float(report["p95_gap_seconds"]) > args.max_p95_gap_seconds
-        ):
-            print(
-                f"QUALITY THRESHOLD NOT MET: p95 gap {report['p95_gap_seconds']}s exceeds "
-                f"{args.max_p95_gap_seconds}s",
-                file=sys.stderr,
-            )
+        if threshold is not None and not report["quality_threshold_passed"]:
+            if report["p95_gap_seconds"] is None:
+                reason = "p95 gap could not be measured"
+            else:
+                reason = (
+                    f"p95 gap {report['p95_gap_seconds']}s exceeds {threshold}s"
+                )
+            print(f"QUALITY THRESHOLD NOT MET: {reason}", file=sys.stderr)
             return 3
     except (OSError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

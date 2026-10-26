@@ -300,7 +300,58 @@ def test_fetch_historical_candles_uses_one_read_only_request_and_writes_utc_csv(
     assert result["rows_reordered_to_chronology"] == 1
     assert result["timeframe_seconds"] == 5
     assert result["source_clock_ahead_seconds_subtracted"] == 7200
+    assert result["instrument_open"] is None
+    assert result["instrument_status"] == "not_reported"
     assert result["orders_submitted"] == 0
+
+
+
+def test_fetch_historical_candles_preserves_provider_closed_status(tmp_path):
+    output = tmp_path / "closed_candles.csv"
+    payload = {
+        "symbol": "EURUSD_otc",
+        "open": False,
+        "count": 2,
+        "gaps": {"runs": 0, "missingBars": 0},
+        "candles": [
+            {"time": 1788103260, "open": 1.1, "high": 1.2, "low": 1.0, "close": 1.1},
+            {"time": 1788103320, "open": 1.1, "high": 1.2, "low": 1.0, "close": 1.1},
+        ],
+    }
+
+    result = fetch_historical_candles(
+        api_key="test-key",
+        output_path=output,
+        symbol="EURUSD_otc",
+        timeframe_seconds=60,
+        limit=2,
+        urlopen_fn=lambda *args, **kwargs: io.BytesIO(json.dumps(payload).encode("utf-8")),
+    )
+    assert result["instrument_open"] is False
+    assert result["instrument_status"] == "closed"
+    assert "closed for trading" in result["instrument_status_note"]
+    assert output.is_file()
+    assert result["orders_submitted"] == 0
+
+
+def test_fetch_historical_candles_rejects_malformed_provider_open_status(tmp_path):
+    payload = {
+        "symbol": "EURUSD_otc",
+        "open": "false",
+        "candles": [
+            {"time": 1788103260, "open": 1.1, "high": 1.2, "low": 1.0, "close": 1.1},
+        ],
+    }
+    with pytest.raises(ValueError, match="field 'open' must be boolean"):
+        fetch_historical_candles(
+            api_key="test-key",
+            output_path=tmp_path / "bad_status.csv",
+            symbol="EURUSD_otc",
+            timeframe_seconds=60,
+            limit=1,
+            urlopen_fn=lambda *args, **kwargs: io.BytesIO(json.dumps(payload).encode("utf-8")),
+        )
+    assert not (tmp_path / "bad_status.csv").exists()
 
 
 def test_fetch_historical_candles_validates_request_and_refuses_overwrite(tmp_path):

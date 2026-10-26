@@ -167,10 +167,12 @@ The fixed-expiry bar backtester settles at candle closes. For a three-second hyp
 Example:
 
 ```bash
-bpr02-seconds-backtest candles_m1.csv quotes.csv --lookback 12 --bar-seconds 60 --bar-timestamp-label open --expiry-seconds 3 --entry-delay-seconds 0.10 --max-quote-delay-seconds 0.25 --min-model-coverage 0.95 --payout 0.80 --stake 1 --quote-source-label "my_authorized_historical_feed" --output seconds_trades.csv --manifest-output seconds_manifest.json
+bpr02-seconds-backtest candles_m1.csv quotes.csv --lookback 12 --bar-seconds 60 --bar-timestamp-label open --expiry-seconds 3 --entry-delay-seconds 0.10 --max-quote-delay-seconds 0.25 --min-model-coverage 0.95 --max-quote-p95-gap-seconds 0.75 --payout 0.80 --stake 1 --quote-source-label "my_authorized_historical_feed" --output seconds_trades.csv --manifest-output seconds_manifest.json
 ```
 
 The CLI uses `--min-model-coverage 0.95` by default. This requires at least 95% of candidate signals to have both modeled entry and settlement quotes; a low ratio or zero candidate signals causes exit status 3 after the CSV and manifest are saved. The manifest records whether this coverage gate passed. This gate does not test whether missing signals are random or whether the price feed is the correct OTC feed. Lower the threshold only when you deliberately want to examine an incomplete sample, and never interpret unmodeled signals as losses or wins.
+
+The seconds backtest also reports `quote_temporal_resolution_assessment`, `quote_gap_p95_seconds`, and the heuristic target `quote_target_p95_gap_seconds` (one quarter of expiry by default). The label is a sampling-resolution screen, not evidence that prices match the broker or that settlement is exact. To enforce a separate p95 interval limit, add `--max-quote-p95-gap-seconds 0.75` for a three-second expiry. This optional hard gate exits with status 3 and still saves the trade CSV and manifest when the p95 gap exceeds the limit or cannot be measured. Without the option, resolution is reported but does not independently fail the run.
 
 The model waits until the signal candle is complete, selects the first quote at or after the entry target, then selects the first quote at or after the requested expiry time. It records how late each selected quote is. If no quote exists or the selected quote exceeds the configured delay tolerance, the signal is marked as unmodeled rather than inventing an entry or settlement. Review `no_entry_quote`, `stale_entry_quote`, `no_settlement_quote`, and `stale_settlement_quote` before interpreting the results. A smaller delay tolerance rejects more observations; a larger tolerance makes the modeled settlement less precise.
 

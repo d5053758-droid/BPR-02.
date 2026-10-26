@@ -9,7 +9,7 @@ import contextlib
 import json
 import math
 import tempfile
-from io import StringIO
+from io import BytesIO, StringIO
 from pathlib import Path
 
 import pandas as pd
@@ -26,7 +26,7 @@ from .indicators import atr, ema
 from .replay import main as replay_main
 from .review import record_review
 from .quote_audit import audit_quote_series
-from .otc_data import convert_tick_log_to_quotes
+from .otc_data import convert_tick_log_to_quotes, fetch_historical_candles
 from .sensitivity import run_sensitivity_analysis
 from .signal_bridge import SignalBridge, run_jsonl_bridge
 from .signals import CALL, NO_TRADE, PUT, sweep_reclaim_signals
@@ -175,6 +175,42 @@ def run_smoke_test() -> dict[str, object]:
         if quote_audit["temporal_resolution_assessment"] != "meets_configured_resolution_screen":
             raise RuntimeError("Synthetic quote fixture did not exercise the configured resolution screen")
         completed.append("quote_temporal_quality_audit")
+
+        # Exercise the one-request historical candle adapter with a mocked provider response.
+        # Smoke tests must never call the external API or require a real key.
+        synthetic_provider_candles = []
+        for _, candle in candles.head(5).iterrows():
+            raw_epoch = int(pd.Timestamp(candle["timestamp"]).timestamp()) + 7200
+            synthetic_provider_candles.append({
+                "time": raw_epoch,
+                "open": float(candle["open"]),
+                "high": float(candle["high"]),
+                "low": float(candle["low"]),
+                "close": float(candle["close"]),
+            })
+        fake_provider_response = json.dumps({
+            "symbol": "EURUSD_otc",
+            "count": len(synthetic_provider_candles),
+            "interval": "5s",
+            "gaps": {"runs": 0, "missingBars": 0},
+            "candles": synthetic_provider_candles,
+        }).encode("utf-8")
+        api_candle_path = root / "otc_api_candles.csv"
+        candle_fetch_result = fetch_historical_candles(
+            api_key="synthetic-smoke-test-key",
+            output_path=api_candle_path,
+            symbol="EURUSD_otc",
+            timeframe_seconds=5,
+            limit=5,
+            source_clock_ahead_seconds=7200,
+            urlopen_fn=lambda request, timeout: BytesIO(fake_provider_response),
+        )
+        api_candles = load_ohlc_csv(api_candle_path)
+        if len(api_candles) != len(synthetic_provider_candles):
+            raise RuntimeError("Mocked OTC candle fetch lost rows during conversion")
+        if candle_fetch_result["orders_submitted"] != 0:
+            raise RuntimeError("Read-only OTC candle adapter unexpectedly indicates order execution")
+        completed.append("otc_candle_fetch_mock")
 
         # Exercise the raw tick-log -> UTC-second CSV path without a network call.
         # The provider's documented OTC clock offset is simulated and remains configurable.
@@ -342,6 +378,9 @@ def run_smoke_test() -> dict[str, object]:
             "converted_quote_observations": converted_audit["observations"],
             "converted_quote_gap_p95_seconds": converted_audit["p95_gap_seconds"],
             "quote_temporal_resolution_assessment": quote_audit["temporal_resolution_assessment"],
+            "otc_candle_rows_fetched": candle_fetch_result["output_candles"],
+            "otc_candle_timeframe_seconds": candle_fetch_result["timeframe_seconds"],
+            "otc_candle_orders_submitted": candle_fetch_result["orders_submitted"],
             "otc_tick_rows_converted": conversion["tick_rows_for_symbol"],
             "otc_duplicate_second_ticks_collapsed": conversion["same_second_ticks_collapsed"],
             "seconds_expiry_candidates": seconds_diagnostics["candidate_signals"],

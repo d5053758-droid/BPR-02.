@@ -5,7 +5,7 @@ from collections.abc import Iterable
 
 import pandas as pd
 
-from .backtest import backtest_fixed_expiry, summarize_results
+from .backtest import backtest_coverage_diagnostics, backtest_fixed_expiry, summarize_results
 from .evaluation import chronological_split
 from .signals import CALL, PUT, sweep_reclaim_signals
 
@@ -67,11 +67,17 @@ def run_sensitivity_analysis(
                     stake=stake,
                     tie_policy=tie_policy,
                 )
+                coverage = backtest_coverage_diagnostics(
+                    local_candles,
+                    local_signals,
+                    expiry_bars=expiry,
+                    expected_interval_seconds=expected_interval_seconds,
+                )
                 rows.append({
                     "segment": segment,
                     "lookback": lookback,
                     "expiry_bars": expiry,
-                    "candidate_signals": int(local_signals["signal"].isin([CALL, PUT]).sum()),
+                    **coverage,
                     **summarize_results(trades),
                 })
     return pd.DataFrame(rows)

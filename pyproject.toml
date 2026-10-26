@@ -17,6 +17,7 @@ bpr02 = "bpr02.cli:main"
 bpr02-stream = "bpr02.signal_bridge:main"
 bpr02-review = "bpr02.review:main"
 bpr02-replay = "bpr02.replay:main"
+bpr02-smoke = "bpr02.smoke_test:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

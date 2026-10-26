@@ -39,6 +39,7 @@ def assess_readiness(
     expiry_seconds: float = 3.0,
     target_resolution_fraction: float = 0.25,
     max_quote_p95_gap_seconds: float | None = None,
+    max_quote_gap_seconds: float | None = None,
     max_quote_delay_seconds: float = 1.0,
     bar_timestamp_label: str = "open",
 ) -> dict[str, Any]:
@@ -68,6 +69,17 @@ def assess_readiness(
     else:
         quote_threshold = expiry * fraction
         threshold_source = "expiry_fraction_heuristic"
+    if max_quote_gap_seconds is not None:
+        max_quote_gap = _finite_number(
+            max_quote_gap_seconds,
+            "max_quote_gap_seconds",
+            minimum=0,
+            inclusive=True,
+        )
+        quote_gap_threshold_source = "explicit"
+    else:
+        max_quote_gap = None
+        quote_gap_threshold_source = "not_configured"
     if isinstance(max_missing_bars, bool) or not isinstance(max_missing_bars, int) or max_missing_bars < 0:
         raise ValueError("max_missing_bars must be an integer >= 0")
     if bar_timestamp_label not in ("open", "close"):
@@ -75,8 +87,14 @@ def assess_readiness(
 
     gates: dict[str, dict[str, Any]] = {}
 
-    def gate(name: str, passed: bool, detail: str) -> None:
-        gates[name] = {"passed": bool(passed), "required": True, "detail": detail}
+    def gate(
+        name: str,
+        passed: bool | None,
+        detail: str,
+        *,
+        required: bool = True,
+    ) -> None:
+        gates[name] = {"passed": passed, "required": required, "detail": detail}
 
     rows = int(candle_audit.get("rows", 0) or 0)
     structurally_valid = bool(candle_audit.get("structurally_valid", False))
@@ -142,6 +160,29 @@ def assess_readiness(
                 f"({threshold_source})."
             ),
         )
+        observed_max_gap = quote_audit.get("max_gap_seconds")
+        if max_quote_gap is None:
+            max_gap_passed = None
+            max_gap_detail = (
+                f"Observed maximum gap: {observed_max_gap!r} seconds; "
+                "no explicit maximum-gap limit configured, so this gate is reported but not enforced."
+            )
+        else:
+            max_gap_passed = (
+                observed_max_gap is not None
+                and math.isfinite(float(observed_max_gap))
+                and float(observed_max_gap) <= max_quote_gap
+            )
+            max_gap_detail = (
+                f"Observed maximum gap: {observed_max_gap!r} seconds; "
+                f"explicit limit: {max_quote_gap:g} seconds."
+            )
+        gate(
+            "quote_maximum_gap",
+            max_gap_passed,
+            max_gap_detail,
+            required=max_quote_gap is not None,
+        )
 
         quote_start = pd.Timestamp(quote_audit["start_timestamp"]) if quote_audit.get("start_timestamp") else None
         quote_end = pd.Timestamp(quote_audit["end_timestamp"]) if quote_audit.get("end_timestamp") else None
@@ -198,7 +239,7 @@ def assess_readiness(
             else "Quote history does not extend through the required final settlement horizon, or the candle interval/timestamps are unavailable.",
         )
 
-    required_passed = all(item["passed"] for item in gates.values() if item["required"])
+    required_passed = all(item["passed"] is True for item in gates.values() if item["required"])
     if not required_passed:
         status = "not_ready"
     elif mode == "seconds_expiry_research":
@@ -219,6 +260,8 @@ def assess_readiness(
             "expiry_seconds": expiry,
             "target_resolution_fraction": fraction,
             "max_quote_p95_gap_seconds": max_quote_p95_gap_seconds,
+            "max_quote_gap_seconds": max_quote_gap_seconds,
+            "quote_max_gap_threshold_source": quote_gap_threshold_source,
             "effective_quote_p95_threshold_seconds": quote_threshold if quote_audit is not None else None,
             "quote_threshold_source": threshold_source if quote_audit is not None else None,
             "max_quote_delay_seconds": delay,
@@ -265,6 +308,11 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         help="Optional explicit p95 quote-gap limit; otherwise expiry * target-resolution-fraction is used",
     )
+    parser.add_argument(
+        "--max-quote-gap-seconds",
+        type=float,
+        help="Optional hard limit for the largest quote gap; unlike p95, this also screens rare long gaps",
+    )
     parser.add_argument("--max-quote-delay-seconds", type=float, default=1.0)
     parser.add_argument("--bar-timestamp-label", choices=("open", "close"), default="open")
     parser.add_argument("--output", default="bpr02_readiness.json", help="Readiness report JSON output path")
@@ -304,6 +352,10 @@ def main(argv: list[str] | None = None) -> int:
             not math.isfinite(args.max_quote_p95_gap_seconds) or args.max_quote_p95_gap_seconds < 0
         ):
             raise ValueError("--max-quote-p95-gap-seconds must be finite and >= 0")
+        if args.max_quote_gap_seconds is not None and (
+            not math.isfinite(args.max_quote_gap_seconds) or args.max_quote_gap_seconds < 0
+        ):
+            raise ValueError("--max-quote-gap-seconds must be finite and >= 0")
         if not math.isfinite(args.max_quote_delay_seconds) or args.max_quote_delay_seconds < 0:
             raise ValueError("--max-quote-delay-seconds must be finite and >= 0")
 
@@ -331,6 +383,7 @@ def main(argv: list[str] | None = None) -> int:
             expiry_seconds=args.expiry_seconds,
             target_resolution_fraction=args.target_resolution_fraction,
             max_quote_p95_gap_seconds=args.max_quote_p95_gap_seconds,
+            max_quote_gap_seconds=args.max_quote_gap_seconds,
             max_quote_delay_seconds=args.max_quote_delay_seconds,
             bar_timestamp_label=args.bar_timestamp_label,
         )

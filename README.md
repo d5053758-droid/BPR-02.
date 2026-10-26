@@ -119,10 +119,11 @@ bpr02-readiness otc_candles_m1.csv \
   --expiry-seconds 3 \
   --max-quote-delay-seconds 0.25 \
   --max-quote-p95-gap-seconds 0.75 \
+  --max-quote-gap-seconds 0.75 \
   --output seconds_readiness.json
 ```
 
-The command writes a JSON report even when data-quality gates fail. Exit code **0** means the configured preflight gates passed; **3** means at least one gate failed; **2** means the inputs or parameters could not be processed. The checks include candle structure, explicit source cadence, missing-bar budget, quote p95 gap, and quote time-range coverage. When no explicit quote-gap limit is supplied, the default screen is expiry multiplied by `--target-resolution-fraction` (0.25 by default); this is a heuristic, not a universal standard. Increase `--max-missing-bars` only when you deliberately accept the estimated gaps and have reviewed the gap report.
+The command writes a JSON report even when data-quality gates fail. Exit code **0** means the configured preflight gates passed; **3** means at least one gate failed; **2** means the inputs or parameters could not be processed. The checks include candle structure, explicit source cadence, missing-bar budget, quote p95 gap, and quote time-range coverage. The optional `--max-quote-gap-seconds` adds a separate hard limit for the **largest individual gap**, because a p95 metric can hide rare long gaps. Without this option, the report shows the observed maximum gap but explicitly marks the gate as unenforced. When no explicit p95 limit is supplied, the default p95 screen is expiry multiplied by `--target-resolution-fraction` (0.25 by default); this is a heuristic, not a universal standard. Increase `--max-missing-bars` only when you deliberately accept the estimated gaps and have reviewed the gap report.
 
 For a bar-only CSV, omit `--quotes-csv`. The report then says whether the candles pass the bar-based preflight; it does not claim seconds-expiry readiness. A passing report is only a data-quality screen: it does not prove source identity, Pocket Option OTC parity, exact settlement reconstruction, strategy validity, or profitability. Synthetic CI fixtures check software behavior only.
 

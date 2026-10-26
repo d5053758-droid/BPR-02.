@@ -15,6 +15,7 @@ def run_sensitivity_analysis(
     *,
     lookbacks: Iterable[int] = (6, 12, 18),
     expiry_bars: Iterable[int] = (1, 2, 3),
+    expected_interval_seconds: float | None = None,
     train_fraction: float = 0.70,
     payout: float = 0.80,
     stake: float = 1.0,
@@ -46,7 +47,10 @@ def run_sensitivity_analysis(
     rows: list[dict[str, object]] = []
 
     for lookback in lookback_values:
-        signals = sweep_reclaim_signals(candles, lookback=lookback)
+        signals = sweep_reclaim_signals(
+            candles, lookback=lookback,
+            expected_interval_seconds=expected_interval_seconds,
+        )
         for segment, segment_candles, segment_signals in (
             ("train", train, signals.iloc[:split_index]),
             ("test", test, signals.iloc[split_index:]),
@@ -58,6 +62,7 @@ def run_sensitivity_analysis(
                     local_candles,
                     local_signals,
                     expiry_bars=expiry,
+                    expected_interval_seconds=expected_interval_seconds,
                     payout=payout,
                     stake=stake,
                     tie_policy=tie_policy,

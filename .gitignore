@@ -22,3 +22,4 @@ bpr02_seconds_fold_metrics.csv
 bpr02_quote_audit.json
 otc_ticks_raw.jsonl
 otc_quotes.csv
+otc_candles_5s.csv

@@ -837,14 +837,19 @@ def main(argv: list[str] | None = None) -> int:
         p95_gap = diagnostics.get("quote_gap_p95_seconds")
         quote_resolution_gate_enforced = args.max_quote_p95_gap_seconds is not None
         quote_resolution_gate_passed = (
-            not quote_resolution_gate_enforced
-            or (
+            (
                 p95_gap is not None
                 and float(p95_gap) <= float(args.max_quote_p95_gap_seconds)
             )
+            if quote_resolution_gate_enforced else None
         )
+        # Only enforced gates contribute to this combined pass/fail value.
         all_quality_gates_passed = (
-            model_coverage_gate_passed and quote_resolution_gate_passed
+            model_coverage_gate_passed
+            and (
+                not quote_resolution_gate_enforced
+                or quote_resolution_gate_passed is True
+            )
         )
         manifest["parameters"]["min_model_coverage"] = args.min_model_coverage
         manifest["parameters"]["max_quote_p95_gap_seconds"] = args.max_quote_p95_gap_seconds

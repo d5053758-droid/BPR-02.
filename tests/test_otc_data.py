@@ -8,6 +8,7 @@ import pytest
 
 from bpr02.otc_data import (
     convert_tick_log_to_quotes,
+    fetch_historical_candles,
     main,
     record_live_ticks,
 )
@@ -234,3 +235,160 @@ def test_converter_rejects_mixed_clock_offsets_in_appended_raw_log(tmp_path):
     with pytest.raises(ValueError, match="different clock-offset settings"):
         convert_tick_log_to_quotes(raw_log_path=raw_path, output_path=output_path)
     assert not output_path.exists()
+
+
+
+def test_fetch_historical_candles_uses_one_read_only_request_and_writes_utc_csv(tmp_path):
+    output = tmp_path / "candles.csv"
+    payload = {
+        "symbol": "EURUSD_otc",
+        "count": 2,
+        "interval": "5s",
+        "gaps": {"runs": 0, "missingBars": 0},
+        "candles": [
+            {
+                "time": 1788103265,
+                "open": 1.1002,
+                "high": 1.1005,
+                "low": 1.1001,
+                "close": 1.1004,
+            },
+            {
+                "time": 1788103260,
+                "open": 1.1000,
+                "high": 1.1003,
+                "low": 1.0999,
+                "close": 1.1002,
+            },
+        ],
+    }
+    observed = {}
+
+    def fake_urlopen(request, timeout):
+        observed["url"] = request.full_url
+        observed["authorization"] = request.get_header("Authorization")
+        observed["accept"] = request.get_header("Accept")
+        observed["timeout"] = timeout
+        return io.BytesIO(json.dumps(payload).encode("utf-8"))
+
+    result = fetch_historical_candles(
+        api_key="secret-candle-key",
+        output_path=output,
+        symbol="EURUSD_otc",
+        timeframe_seconds=5,
+        limit=2,
+        source_clock_ahead_seconds=7200,
+        urlopen_fn=fake_urlopen,
+    )
+
+    with output.open(encoding="utf-8", newline="") as handle:
+        rows = list(csv.DictReader(handle))
+    assert "venue=otc" in observed["url"]
+    assert "symbol=EURUSD_otc" in observed["url"]
+    assert "tf=5" in observed["url"]
+    assert "limit=2" in observed["url"]
+    assert observed["authorization"] == "Bearer secret-candle-key"
+    assert observed["accept"] == "application/json"
+    assert observed["timeout"] == 30
+    assert "secret-candle-key" not in output.read_text(encoding="utf-8")
+    assert [row["timestamp"] for row in rows] == sorted(row["timestamp"] for row in rows)
+    assert rows[0]["timestamp"] == datetime.fromtimestamp(
+        1788103260 - 7200, tz=timezone.utc
+    ).isoformat().replace("+00:00", "Z")
+    assert float(rows[0]["open"]) == pytest.approx(1.1)
+    assert result["output_candles"] == 2
+    assert result["rows_reordered_to_chronology"] == 1
+    assert result["timeframe_seconds"] == 5
+    assert result["source_clock_ahead_seconds_subtracted"] == 7200
+    assert result["orders_submitted"] == 0
+
+
+def test_fetch_historical_candles_validates_request_and_refuses_overwrite(tmp_path):
+    output = tmp_path / "candles.csv"
+    output.write_text("preserve me\n", encoding="utf-8")
+    with pytest.raises(FileExistsError, match="refusing to overwrite"):
+        fetch_historical_candles(
+            api_key="key",
+            output_path=output,
+            urlopen_fn=lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("must not call API")),
+        )
+    with pytest.raises(ValueError, match="timeframe_seconds"):
+        fetch_historical_candles(
+            api_key="key",
+            output_path=tmp_path / "bad-timeframe.csv",
+            timeframe_seconds=7,
+            urlopen_fn=lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("must not call API")),
+        )
+    with pytest.raises(ValueError, match="limit"):
+        fetch_historical_candles(
+            api_key="key",
+            output_path=tmp_path / "bad-limit.csv",
+            limit=1501,
+            urlopen_fn=lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("must not call API")),
+        )
+    assert output.read_text(encoding="utf-8") == "preserve me\n"
+
+
+def test_fetch_historical_candles_rejects_wrong_symbol_empty_data_and_bad_ohlc(tmp_path):
+    wrong_symbol = {
+        "symbol": "GBPUSD_otc",
+        "candles": [{
+            "time": 1788103260, "open": 1.1, "high": 1.2, "low": 1.0, "close": 1.1,
+        }],
+    }
+    with pytest.raises(ValueError, match="not requested symbol"):
+        fetch_historical_candles(
+            api_key="key",
+            output_path=tmp_path / "wrong-symbol.csv",
+            urlopen_fn=lambda request, timeout: io.BytesIO(json.dumps(wrong_symbol).encode()),
+        )
+
+    empty = {"symbol": "EURUSD_otc", "candles": []}
+    with pytest.raises(ValueError, match="no candles"):
+        fetch_historical_candles(
+            api_key="key",
+            output_path=tmp_path / "empty.csv",
+            urlopen_fn=lambda request, timeout: io.BytesIO(json.dumps(empty).encode()),
+        )
+
+    invalid = {
+        "symbol": "EURUSD_otc",
+        "candles": [{
+            "time": 1788103260, "open": 1.1, "high": 1.0, "low": 0.9, "close": 1.05,
+        }],
+    }
+    with pytest.raises(ValueError, match="invalid high"):
+        fetch_historical_candles(
+            api_key="key",
+            output_path=tmp_path / "invalid.csv",
+            urlopen_fn=lambda request, timeout: io.BytesIO(json.dumps(invalid).encode()),
+        )
+
+
+def test_otc_data_candles_cli_reads_api_key_from_environment(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("OTCHARTS_API_KEY", "api-test-key")
+    output = tmp_path / "cli-candles.csv"
+    payload = {
+        "symbol": "EURUSD_otc",
+        "candles": [{
+            "time": 1788103260, "open": 1.1, "high": 1.2, "low": 1.0, "close": 1.1,
+        }],
+    }
+    import bpr02.otc_data as otc_data
+    monkeypatch.setattr(
+        otc_data.urllib.request,
+        "urlopen",
+        lambda request, timeout: io.BytesIO(json.dumps(payload).encode("utf-8")),
+    )
+    code = main([
+        "candles",
+        "--timeframe-seconds", "5",
+        "--limit", "1",
+        "--output", str(output),
+    ])
+    result = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert result["mode"] == "read_only_otc_candle_fetch"
+    assert result["output_candles"] == 1
+    assert result["orders_submitted"] == 0
+    assert output.exists()

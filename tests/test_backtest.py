@@ -39,6 +39,13 @@ def test_put_loss_and_tie_push():
     assert stats["net_pnl_in_stake_units"] == -1.0
 
 
+def test_tie_policy_loss_counts_tie_as_a_loss():
+    data = candles([10, 11], [10, 11])
+    result = backtest_fixed_expiry(data, pd.Series([CALL, NO_TRADE]), tie_policy="loss")
+    assert result.iloc[0]["outcome"] == "LOSS"
+    assert result.iloc[0]["pnl"] == -1.0
+
+
 def test_parameters_and_mismatched_lengths_rejected():
     data = candles([1, 2])
     with pytest.raises(ValueError):

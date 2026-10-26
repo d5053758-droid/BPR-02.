@@ -26,10 +26,11 @@ from .indicators import atr, ema
 from .replay import main as replay_main
 from .review import record_review
 from .quote_audit import audit_quote_series
+from .otc_data import convert_tick_log_to_quotes
 from .sensitivity import run_sensitivity_analysis
 from .signal_bridge import SignalBridge, run_jsonl_bridge
 from .signals import CALL, NO_TRADE, PUT, sweep_reclaim_signals
-from .subminute import backtest_seconds_expiry, run_seconds_walk_forward
+from .subminute import backtest_seconds_expiry, load_quote_csv, run_seconds_walk_forward
 from .walkforward import run_walk_forward
 
 LOOKBACK = 5
@@ -175,10 +176,50 @@ def run_smoke_test() -> dict[str, object]:
             raise RuntimeError("Synthetic quote fixture did not exercise the configured resolution screen")
         completed.append("quote_temporal_quality_audit")
 
+        # Exercise the raw tick-log -> UTC-second CSV path without a network call.
+        # The provider's documented OTC clock offset is simulated and remains configurable.
+        raw_tick_log = root / "synthetic_otc_ticks.jsonl"
+        raw_records: list[str] = []
+        for tick_time, tick_price in zip(quote_times[::4], quote_prices[::4]):
+            source_epoch = int(tick_time.timestamp()) + 7200
+            raw_records.append(json.dumps({
+                "schema_version": 1,
+                "source": "otcharts",
+                "venue": "otc",
+                "event": "tick",
+                "source_time_epoch_seconds": source_epoch,
+                "payload": {
+                    "symbol": "EURUSD_otc",
+                    "time": source_epoch,
+                    "price": tick_price,
+                },
+            }))
+        raw_tick_log.write_text("\\n".join(raw_records) + "\\n", encoding="utf-8")
+        converted_quotes_path = root / "converted_otc_quotes.csv"
+        conversion = convert_tick_log_to_quotes(
+            raw_log_path=raw_tick_log,
+            output_path=converted_quotes_path,
+            symbol="EURUSD_otc",
+            source_clock_ahead_seconds=7200,
+        )
+        converted_quotes = load_quote_csv(converted_quotes_path)
+        if conversion["unique_second_quotes"] != len(converted_quotes):
+            raise RuntimeError("OTC tick conversion count does not match the quote CSV")
+        completed.append("otc_tick_log_conversion")
+
+        converted_audit = audit_quote_series(
+            converted_quotes,
+            expiry_seconds=3,
+            target_resolution_fraction=0.50,
+        )
+        if converted_audit["temporal_resolution_assessment"] != "meets_configured_resolution_screen":
+            raise RuntimeError("Converted quote fixture failed its configured temporal-resolution screen")
+        completed.append("converted_quote_resolution_audit")
+
         seconds_trades, seconds_diagnostics = backtest_seconds_expiry(
             candles,
             signals,
-            synthetic_quotes,
+            converted_quotes,
             bar_seconds=60,
             bar_timestamp_label="open",
             expiry_seconds=3,
@@ -195,7 +236,7 @@ def run_smoke_test() -> dict[str, object]:
         seconds_walk_trades, seconds_fold_metrics, seconds_wf_diagnostics = run_seconds_walk_forward(
             candles,
             signals,
-            synthetic_quotes,
+            converted_quotes,
             initial_train_size=30,
             test_size=10,
             step_size=10,
@@ -296,9 +337,13 @@ def run_smoke_test() -> dict[str, object]:
             "walk_forward_folds": len(fold_metrics),
             "walk_forward_simulated_trades": len(walk_trades),
             "sensitivity_rows": len(sensitivity),
-            "quote_observations": quote_audit["observations"],
-            "quote_gap_p95_seconds": quote_audit["p95_gap_seconds"],
+            "high_resolution_quote_observations": quote_audit["observations"],
+            "high_resolution_quote_gap_p95_seconds": quote_audit["p95_gap_seconds"],
+            "converted_quote_observations": converted_audit["observations"],
+            "converted_quote_gap_p95_seconds": converted_audit["p95_gap_seconds"],
             "quote_temporal_resolution_assessment": quote_audit["temporal_resolution_assessment"],
+            "otc_tick_rows_converted": conversion["tick_rows_for_symbol"],
+            "otc_duplicate_second_ticks_collapsed": conversion["same_second_ticks_collapsed"],
             "seconds_expiry_candidates": seconds_diagnostics["candidate_signals"],
             "seconds_expiry_modeled_trades": len(seconds_trades),
             "seconds_expiry_unmodeled_signals": seconds_diagnostics["unmodeled_signals"],

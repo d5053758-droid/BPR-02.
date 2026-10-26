@@ -25,6 +25,7 @@ from .execution import (
 from .indicators import atr, ema
 from .replay import main as replay_main
 from .review import record_review
+from .quote_audit import audit_quote_series
 from .sensitivity import run_sensitivity_analysis
 from .signal_bridge import SignalBridge, run_jsonl_bridge
 from .signals import CALL, NO_TRADE, PUT, sweep_reclaim_signals
@@ -144,11 +145,11 @@ def run_smoke_test() -> dict[str, object]:
 
         # Exercise the second-expiry engine with synthetic one-second observations.
         # This verifies code paths only; it does not approximate OTC market truth.
-        quote_periods = (ROW_COUNT + 2) * 60
+        quote_periods = (ROW_COUNT + 2) * 60 * 4
         quote_times = pd.date_range(
             candles["timestamp"].iloc[0],
             periods=quote_periods,
-            freq="s",
+            freq="250ms",
         )
         candle_closes = candles["close"].to_numpy(dtype=float)
         quote_prices: list[float] = []
@@ -165,6 +166,15 @@ def run_smoke_test() -> dict[str, object]:
             "timestamp": quote_times,
             "price": quote_prices,
         })
+        quote_audit = audit_quote_series(
+            synthetic_quotes,
+            expiry_seconds=3,
+            target_resolution_fraction=0.25,
+        )
+        if quote_audit["temporal_resolution_assessment"] != "meets_configured_resolution_screen":
+            raise RuntimeError("Synthetic quote fixture did not exercise the configured resolution screen")
+        completed.append("quote_temporal_quality_audit")
+
         seconds_trades, seconds_diagnostics = backtest_seconds_expiry(
             candles,
             signals,
@@ -286,6 +296,9 @@ def run_smoke_test() -> dict[str, object]:
             "walk_forward_folds": len(fold_metrics),
             "walk_forward_simulated_trades": len(walk_trades),
             "sensitivity_rows": len(sensitivity),
+            "quote_observations": quote_audit["observations"],
+            "quote_gap_p95_seconds": quote_audit["p95_gap_seconds"],
+            "quote_temporal_resolution_assessment": quote_audit["temporal_resolution_assessment"],
             "seconds_expiry_candidates": seconds_diagnostics["candidate_signals"],
             "seconds_expiry_modeled_trades": len(seconds_trades),
             "seconds_expiry_unmodeled_signals": seconds_diagnostics["unmodeled_signals"],

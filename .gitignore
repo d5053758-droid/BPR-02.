@@ -15,3 +15,4 @@ bpr02_sensitivity.csv
 bpr02_fold_metrics.csv
 events.jsonl
 reviews.jsonl
+bpr02_run_manifest.json

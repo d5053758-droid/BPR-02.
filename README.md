@@ -75,7 +75,16 @@ bpr02-resample-candles otc_candles_5s.csv \
 
 The adapter expects source timestamps to identify the **opening time** of each 5-second candle. It writes a 1-minute OHLC row only when all 12 expected source candles are present on the 5-second UTC grid. Partial minutes are excluded, and the JSON report separately counts partial intervals, estimated missing source slots and fully missing minutes. Nothing is interpolated or forward-filled. The report and manifest fingerprint the input/output data.
 
-Review the report before testing any rule. If the output has time gaps, BPR-02 resets signal lookback at those gaps and will not score a bar-based trade whose signal-to-settlement window crosses one. This automatic continuity check infers the most common observed spacing; it cannot detect a systematic omission when the remaining timestamps are still regularly spaced, so compare the source's declared timeframe with the report.
+Review the report before testing any rule. If the output has time gaps, BPR-02 resets signal lookback at those gaps and will not score a bar-based trade whose signal-to-settlement window crosses one. This automatic continuity check infers the most common observed spacing; it cannot detect a systematic omission when the remaining timestamps are still regularly spaced, so compare the source's declared timeframe with the report. Pin the expected interval for the actual backtest as well:
+
+```bash
+python -m bpr02 otc_candles_m1.csv \
+  --expected-interval-seconds 60 \
+  --output otc_m1_bar_trades.csv \
+  --manifest-output otc_m1_bar_manifest.json
+```
+
+The same `--expected-interval-seconds 60` option applies to ordinary bar backtests, walk-forward runs, sensitivity checks and data audits. Set it to the real source candle spacing; do not use a value merely because it yields more signals.
 
 You can audit the resulting M1 file too:
 

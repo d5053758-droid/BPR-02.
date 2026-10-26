@@ -45,6 +45,14 @@ Use a CSV from a source you are permitted to use. Do not commit private account 
 python -m bpr02 path/to/candles.csv --output results.csv --lookback 12 --expiry-bars 1 --payout 0.80 --stake 1
 ```
 
+To run expanding walk-forward evaluation and export a per-fold metrics CSV:
+
+```bash
+python -m bpr02 path/to/candles.csv --walk-forward --initial-train-size 5000 --test-size 1000 --step-size 1000 --lookback 12 --output trades.csv --fold-summary folds.csv
+```
+
+The walk-forward mode requires both `--initial-train-size` and `--test-size`. Training windows expand chronologically; test windows stay in the future and do not overlap by default. Choose window sizes based on the dataset, and do not repeatedly tune the rule against the final evaluation window.
+
 Options:
 - `--lookback`: prior candles in the sweep/reclaim reference range (minimum 2).
 - `--expiry-bars`: candles from entry to settlement (minimum 1). With value 1, entry is at the next candle open and settlement is that candle's close.

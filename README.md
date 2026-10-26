@@ -22,8 +22,21 @@ Install from the repository root:
 
 ```bash
 python -m pip install -e ".[test]"
+bpr02-smoke
 python -m pytest
 ```
+
+## Reproducible software smoke test
+
+After installation, run:
+
+```bash
+bpr02-smoke
+```
+
+The command generates a temporary set of deliberately synthetic OHLC candles and checks CSV import/audit, EMA/ATR, candidate generation, fixed-expiry simulation, walk-forward windows, sensitivity analysis, historical replay, signal-event logging, manual review journaling, and the disabled execution boundary. It deletes its temporary files on exit and does not require a market-data file, network access, broker credentials, or a Pocket Option connection.
+
+A successful result reports `status: passed`, the checks completed, and `orders_submitted: 0`. This is a software integration check only: the candles are synthetic, and passing the check does not demonstrate a profitable strategy or parity with any broker's OTC prices. GitHub Actions runs this command before the unit-test suite on Python 3.11 and 3.12.
 
 ## Input CSV
 
@@ -145,6 +158,7 @@ Choose `review` to mark an alert for manual inspection or `ignore` to dismiss it
 - `bpr02/execution.py`: fail-closed interface for a possible future authorized adapter; no live adapter or order submission is implemented.
 - `bpr02/review.py`: append-only manual signal review journal.
 - `bpr02/replay.py`: deterministic historical CSV-to-JSONL test adapter (not live).
+- `bpr02/smoke_test.py`: runnable synthetic end-to-end software check, exposed as `bpr02-smoke`.
 - `docs/FEED_ADAPTER_CONTRACT.md`: data-provider interface contract and connection requirements.
 - `docs/FUTURE_EXECUTION_BOUNDARY.md`: prerequisites, approval boundary and safeguards for any future execution adapter.
 - `bpr02/sensitivity.py`: chronological train/test sensitivity grid for lookback and expiry.

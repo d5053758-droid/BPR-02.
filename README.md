@@ -58,6 +58,23 @@ timestamp,open,high,low,close
 
 Use a CSV from a source you are permitted to use. Do not commit private account data, API keys, or sensitive historical datasets to this public repository.
 
+## Research backtests for expiry measured in seconds
+
+The fixed-expiry bar backtester settles at candle closes. For a three-second hypothesis based on M1 signals, use the separate `bpr02-seconds-backtest` command with two files:
+
+- **Signal candles CSV:** `timestamp,open,high,low,close`. Each timestamp must include a timezone or UTC offset. Use `--bar-timestamp-label open` if the timestamp is the start of each M1 candle; use `close` if it is the time the fully formed candle closed.
+- **Quote observations CSV:** `timestamp,price`. Every timestamp must include a timezone/UTC offset; rows must be unique, sorted chronologically, and the price must be finite and positive. Use a feed with adequate timestamp precision and sampling frequency for the expiry under study.
+
+Example:
+
+```bash
+bpr02-seconds-backtest candles_m1.csv quotes.csv --lookback 12 --bar-seconds 60 --bar-timestamp-label open --expiry-seconds 3 --entry-delay-seconds 0.10 --max-quote-delay-seconds 0.25 --payout 0.80 --stake 1 --quote-source-label "my_authorized_historical_feed" --output seconds_trades.csv --manifest-output seconds_manifest.json
+```
+
+The model waits until the signal candle is complete, selects the first quote at or after the entry target, then selects the first quote at or after the requested expiry time. It records how late each selected quote is. If no quote exists or the selected quote exceeds the configured delay tolerance, the signal is marked as unmodeled rather than inventing an entry or settlement. Review `no_entry_quote`, `stale_entry_quote`, `no_settlement_quote`, and `stale_settlement_quote` before interpreting the results. A smaller delay tolerance rejects more observations; a larger tolerance makes the modeled settlement less precise.
+
+**Important limitation:** this is a timestamped-quote approximation, not a broker-certified reconstruction of three-second execution or settlement. The data must match the market and price convention being researched. Standard EUR/USD quotes do not establish parity with Pocket Option's EUR/USD OTC feed. No broker is contacted and no orders are placed. A successful test of the code is not evidence of strategy profitability.
+
 ## Run a backtest
 
 ```bash
@@ -157,7 +174,8 @@ Choose `review` to mark an alert for manual inspection or `ignore` to dismiss it
 - `bpr02/data.py`: CSV import and validation.
 - `bpr02/indicators.py`: EMA and simple rolling ATR.
 - `bpr02/signals.py`: experimental sweep/reclaim candidates and reasons.
-- `bpr02/backtest.py`: fixed-expiry simulation and metrics.
+- `bpr02/backtest.py`: fixed-expiry bar simulation and metrics.
+- `bpr02/subminute.py`: second-expiry research using timestamped quote observations; exposed as `bpr02-seconds-backtest`.
 - `bpr02/evaluation.py`: chronological train/test and expanding walk-forward splits.
 - `bpr02/walkforward.py`: per-fold fixed-expiry simulations and fold metrics.
 - `bpr02/signal_bridge.py`: closed-candle JSONL alert bridge and append-only event log.

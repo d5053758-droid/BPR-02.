@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from .backtest import backtest_fixed_expiry, summarize_results
+from .backtest import backtest_coverage_diagnostics, backtest_fixed_expiry, summarize_results
 from .evaluation import expanding_window_splits
 from .signals import CALL, PUT, sweep_reclaim_signals
 
@@ -67,6 +67,12 @@ def run_walk_forward(
             stake=stake,
             tie_policy=tie_policy,
         )
+        coverage = backtest_coverage_diagnostics(
+            test_candles,
+            test_signals,
+            expiry_bars=expiry_bars,
+            expected_interval_seconds=expected_interval_seconds,
+        )
         trades.insert(0, "fold", fold)
         trade_tables.append(trades)
 
@@ -77,6 +83,7 @@ def run_walk_forward(
             "training_end": timestamps.iloc[train_slice.stop - 1],
             "test_start": timestamps.iloc[test_slice.start],
             "test_end": timestamps.iloc[test_slice.stop - 1],
+            **coverage,
             **summarize_results(trades),
         })
 

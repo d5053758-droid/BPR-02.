@@ -26,6 +26,7 @@ from .indicators import atr, ema
 from .replay import main as replay_main
 from .review import record_review
 from .quote_audit import audit_quote_series
+from .readiness import assess_readiness
 from .resample import resample_ohlc_to_interval
 from .otc_data import convert_tick_log_to_quotes, fetch_historical_candles
 from .sensitivity import run_sensitivity_analysis
@@ -100,6 +101,18 @@ def run_smoke_test() -> dict[str, object]:
         if not audit.get("structurally_valid"):
             raise RuntimeError(f"Synthetic fixture failed its data audit: {audit}")
         completed.append("csv_audit")
+
+        readiness = assess_readiness(
+            audit,
+            expected_interval_seconds=60,
+        )
+        if (
+            readiness["readiness_status"] != "ready_for_bar_based_research"
+            or not readiness["overall_ready"]
+            or readiness["orders_submitted"] != 0
+        ):
+            raise RuntimeError(f"Synthetic readiness preflight failed: {readiness}")
+        completed.append("dataset_readiness_preflight")
 
         candles = load_ohlc_csv(source_csv)
         if len(candles) != ROW_COUNT:
@@ -418,6 +431,7 @@ def run_smoke_test() -> dict[str, object]:
         return {
             "status": "passed",
             "mode": "synthetic_research_smoke_test",
+            "readiness_preflight_status": readiness["readiness_status"],
             "checks_passed": completed,
             "check_count": len(completed),
             "synthetic_candles": len(candles),

@@ -118,6 +118,35 @@ def load_quote_csv(path: str | Path) -> pd.DataFrame:
     return pd.DataFrame({"timestamp": frame["timestamp"], "price": prices})
 
 
+
+
+def _validate_quote_frame(quotes: pd.DataFrame) -> pd.DataFrame:
+    """Validate and normalize quote observations once at a reusable boundary."""
+    required = {"timestamp", "price"}
+    missing = sorted(required.difference(quotes.columns))
+    if missing:
+        raise ValueError(f"quotes must contain {sorted(required)}; missing {missing}")
+    if quotes.empty:
+        raise ValueError("quotes must contain at least one row")
+    quote_frame = quotes.copy().reset_index(drop=True)
+    quote_frame["timestamp"] = _parse_explicit_utc(
+        quote_frame["timestamp"], field_name="quotes"
+    )
+    if quote_frame["timestamp"].duplicated().any():
+        raise ValueError("quote timestamps must be unique")
+    if not quote_frame["timestamp"].is_monotonic_increasing:
+        raise ValueError("quote timestamps must be chronologically sorted")
+    try:
+        quote_prices = pd.to_numeric(quote_frame["price"], errors="raise").astype(float)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("quote prices must be numeric and finite") from exc
+    if quote_prices.isna().any() or not quote_prices.map(math.isfinite).all():
+        raise ValueError("quote prices must be numeric and finite")
+    if (quote_prices <= 0).any():
+        raise ValueError("quote prices must be greater than zero")
+    return pd.DataFrame({"timestamp": quote_frame["timestamp"], "price": quote_prices})
+
+
 def _validate_candles_and_signals(
     candles: pd.DataFrame,
     signals: pd.Series | pd.DataFrame,
@@ -210,27 +239,7 @@ def backtest_seconds_expiry(
         raise ValueError("bar_timestamp_label must be 'open' or 'close'")
 
     candles, signal_series = _validate_candles_and_signals(signal_candles, signals)
-    required_quotes = {"timestamp", "price"}
-    missing = sorted(required_quotes.difference(quotes.columns))
-    if missing:
-        raise ValueError(f"quotes must contain {sorted(required_quotes)}; missing {missing}")
-    if quotes.empty:
-        raise ValueError("quotes must contain at least one row")
-    quote_frame = quotes.copy().reset_index(drop=True)
-    quote_frame["timestamp"] = _parse_explicit_utc(quote_frame["timestamp"], field_name="quotes")
-    if quote_frame["timestamp"].duplicated().any():
-        raise ValueError("quote timestamps must be unique")
-    if not quote_frame["timestamp"].is_monotonic_increasing:
-        raise ValueError("quote timestamps must be chronologically sorted")
-    try:
-        quote_prices = pd.to_numeric(quote_frame["price"], errors="raise").astype(float)
-    except (TypeError, ValueError) as exc:
-        raise ValueError("quote prices must be numeric and finite") from exc
-    if quote_prices.isna().any() or not quote_prices.map(math.isfinite).all():
-        raise ValueError("quote prices must be numeric and finite")
-    if (quote_prices <= 0).any():
-        raise ValueError("quote prices must be greater than zero")
-    quote_frame["price"] = quote_prices
+    quote_frame = _validate_quote_frame(quotes)
 
     quote_times = pd.DatetimeIndex(quote_frame["timestamp"])
     quote_intervals = quote_times.to_series().diff().dt.total_seconds().dropna()

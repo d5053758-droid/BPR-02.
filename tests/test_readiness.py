@@ -124,6 +124,56 @@ def test_seconds_preflight_fails_closed_when_quote_history_ends_too_early(tmp_pa
     assert report["gates"]["quote_covers_settlement_horizon"]["passed"] is False
 
 
+
+def test_seconds_preflight_catches_rare_long_quote_gap_even_when_p95_passes(tmp_path, capsys):
+    candles = tmp_path / "candles.csv"
+    quotes = tmp_path / "quotes_with_burst_gap.csv"
+    output = tmp_path / "readiness.json"
+    write_candles(candles)
+    dense_before = pd.date_range("2025-01-01T00:00:00Z", "2025-01-01T00:02:00Z", freq="100ms")
+    dense_after = pd.date_range("2025-01-01T00:02:02Z", "2025-01-01T00:04:05Z", freq="100ms")
+    quote_times = dense_before.append(dense_after)
+    pd.DataFrame({
+        "timestamp": quote_times,
+        "price": [1.1 + i * 0.0000001 for i in range(len(quote_times))],
+    }).to_csv(quotes, index=False)
+
+    code = main([
+        str(candles), "--quotes-csv", str(quotes),
+        "--expected-interval-seconds", "60",
+        "--max-quote-p95-gap-seconds", "0.75",
+        "--max-quote-gap-seconds", "0.75",
+        "--output", str(output),
+    ])
+    capsys.readouterr()
+    report = json.loads(output.read_text(encoding="utf-8"))
+    assert code == 3
+    assert report["gates"]["quote_temporal_resolution"]["passed"] is True
+    assert report["quote_quality"]["p95_gap_seconds"] <= 0.75
+    assert report["quote_quality"]["max_gap_seconds"] > 0.75
+    assert report["gates"]["quote_maximum_gap"]["required"] is True
+    assert report["gates"]["quote_maximum_gap"]["passed"] is False
+
+
+def test_maximum_quote_gap_is_visible_but_unenforced_by_default(tmp_path, capsys):
+    candles = tmp_path / "candles.csv"
+    quotes = tmp_path / "quotes.csv"
+    output = tmp_path / "readiness.json"
+    write_candles(candles)
+    write_quotes(quotes)
+    code = main([
+        str(candles), "--quotes-csv", str(quotes),
+        "--expected-interval-seconds", "60",
+        "--output", str(output),
+    ])
+    capsys.readouterr()
+    report = json.loads(output.read_text(encoding="utf-8"))
+    assert code == 0
+    assert report["gates"]["quote_maximum_gap"]["passed"] is None
+    assert report["gates"]["quote_maximum_gap"]["required"] is False
+    assert "not enforced" in report["gates"]["quote_maximum_gap"]["detail"]
+
+
 def test_preflight_rejects_output_overwriting_input(tmp_path, capsys):
     candles = tmp_path / "candles.csv"
     write_candles(candles)
@@ -143,6 +193,7 @@ def test_preflight_rejects_output_overwriting_input(tmp_path, capsys):
         ({"target_resolution_fraction": 0}, "target_resolution_fraction"),
         ({"target_resolution_fraction": 1.1}, "target_resolution_fraction"),
         ({"max_quote_p95_gap_seconds": -1}, "max_quote_p95_gap_seconds"),
+        ({"max_quote_gap_seconds": -1}, "max_quote_gap_seconds"),
         ({"max_quote_delay_seconds": -1}, "max_quote_delay_seconds"),
         ({"bar_timestamp_label": "middle"}, "bar_timestamp_label"),
     ],

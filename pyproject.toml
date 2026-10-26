@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "bpr02"
-version = "0.7.0"
+version = "0.8.0"
 description = "Research-only EUR/USD fixed-time strategy backtesting"
 requires-python = ">=3.11"
 dependencies = ["pandas>=2.1,<4.0"]

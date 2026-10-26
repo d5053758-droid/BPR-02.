@@ -12,6 +12,7 @@ import csv
 import json
 import math
 import os
+import re
 import sys
 import time
 import urllib.error
@@ -175,6 +176,21 @@ def fetch_historical_candles(
     instrument_open = payload.get("open")
     if instrument_open is not None and not isinstance(instrument_open, bool):
         raise ValueError("OTCharts candle response field 'open' must be boolean when provided")
+    provider_interval = payload.get("interval")
+    provider_interval_seconds: int | None = None
+    if provider_interval is not None:
+        if not isinstance(provider_interval, str):
+            raise ValueError("OTCharts candle response field 'interval' must be a string when provided")
+        match = re.fullmatch(r"\s*(\d+)\s*s\s*", provider_interval, flags=re.IGNORECASE)
+        if not match:
+            raise ValueError(
+                f"OTCharts reported an unsupported candle interval {provider_interval!r}; expected seconds such as '5s'"
+            )
+        provider_interval_seconds = int(match.group(1))
+        if provider_interval_seconds != timeframe_seconds:
+            raise ValueError(
+                f"OTCharts reported interval {provider_interval!r}, but {timeframe_seconds}s was requested"
+            )
 
     candles_by_epoch: dict[int, dict[str, float]] = {}
     reordered_rows = 0
@@ -216,6 +232,16 @@ def fetch_historical_candles(
         right[0] - left[0]
         for left, right in zip(ordered, ordered[1:])
     ]
+    irregular_spacing_count = sum(
+        1 for gap in gaps if abs(gap - timeframe_seconds) > 1e-6
+    )
+    gap_runs = [
+        gap for gap in gaps if gap > timeframe_seconds * 1.5
+    ]
+    estimated_missing_bars = sum(
+        max(int(round(gap / timeframe_seconds)) - 1, 0)
+        for gap in gap_runs
+    )
     temporary = target.with_name(f".{target.name}.tmp")
     try:
         with temporary.open("w", encoding="utf-8", newline="") as handle:
@@ -255,7 +281,12 @@ def fetch_historical_candles(
         "raw_provider_rows": len(rows),
         "output_candles": len(ordered),
         "provider_count": payload.get("count"),
+        "provider_interval": provider_interval,
+        "provider_interval_seconds": provider_interval_seconds,
         "provider_gaps": payload.get("gaps"),
+        "observed_irregular_spacing_intervals": irregular_spacing_count,
+        "observed_large_gap_runs": len(gap_runs),
+        "estimated_missing_bars_from_timestamps": estimated_missing_bars,
         "instrument_open": instrument_open,
         "instrument_status": (
             "open" if instrument_open is True

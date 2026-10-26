@@ -11,7 +11,7 @@ from pathlib import Path
 import pandas as pd
 
 from .provenance import sha256_file
-from .subminute import load_quote_csv
+from .subminute import _parse_explicit_utc, load_quote_csv
 
 
 def _positive_finite(value: object, name: str, *, allow_zero: bool = False) -> float:
@@ -50,10 +50,7 @@ def audit_quote_series(
     if quotes.empty:
         raise ValueError("quotes contain no observations")
     frame = quotes.copy().reset_index(drop=True)
-    try:
-        parsed = pd.to_datetime(frame["timestamp"], errors="raise", utc=True, format="mixed")
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"quote timestamps are invalid: {exc}") from exc
+    parsed = _parse_explicit_utc(frame["timestamp"], field_name="quotes")
     if parsed.isna().any():
         raise ValueError("quote timestamps must not be missing")
     if parsed.duplicated().any():

@@ -157,7 +157,7 @@ bpr02-otc-data candles --symbol EURUSD_otc --timeframe-seconds 5 --limit 1500 --
 unset OTCHARTS_API_KEY
 ```
 
-This performs **one read-only request** for the latest page of five-second OTC candles. The adapter validates the returned symbol, candle timestamps and OHLC ranges, adjusts the provider's documented two-hour OTC clock offset to UTC, and records a SHA-256 hash and coverage summary. It refuses to overwrite an existing CSV unless `--overwrite` is explicitly provided. The number of candles actually returned may be lower than requested; inspect the JSON summary rather than assuming the requested row count was delivered.
+This performs **one read-only request** for the latest page of five-second OTC candles. The adapter validates the returned symbol, candle timestamps and OHLC ranges, adjusts the provider's documented two-hour OTC clock offset to UTC, and records a SHA-256 hash and coverage summary. When the response includes the provider's current `open` field, the result also preserves it as `instrument_status`; this is current status metadata, not a guarantee that the instrument will be open during a future session or a signal to trade. It refuses to overwrite an existing CSV unless `--overwrite` is explicitly provided. The number of candles actually returned may be lower than requested; inspect the JSON summary rather than assuming the requested row count was delivered.
 
 Inspect the exported file in BPR-02:
 

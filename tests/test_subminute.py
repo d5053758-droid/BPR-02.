@@ -225,6 +225,9 @@ def test_seconds_backtest_cli_writes_trade_file_and_two_source_manifest(tmp_path
     assert result["orders_submitted"] == 0
     assert result["model_coverage_gate_passed"] is True
     assert result["minimum_model_coverage"] == pytest.approx(0.95)
+    assert result["quote_resolution_gate_enforced"] is False
+    assert result["quote_resolution_gate_passed"] is None
+    assert result["all_quality_gates_passed"] is True
     assert output_path.exists()
     assert manifest["mode"] == "seconds_expiry_research_only"
     assert manifest["summary"]["model_coverage_gate_passed"] is True

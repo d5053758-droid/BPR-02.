@@ -6,6 +6,7 @@ from typing import Literal
 import pandas as pd
 
 from .signals import CALL, NO_TRADE, PUT
+from .statistics import wilson_interval
 
 TiePolicy = Literal["push", "loss"]
 
@@ -110,6 +111,7 @@ def summarize_results(results: pd.DataFrame) -> dict[str, float | int | None]:
     losses = int((results["outcome"] == "LOSS").sum())
     ties = int((results["outcome"] == "TIE").sum())
     settled = wins + losses
+    win_rate_ci_low, win_rate_ci_high = wilson_interval(wins, settled)
     pnl = pd.to_numeric(results["pnl"], errors="coerce").fillna(0.0)
     total_pnl = float(pnl.sum()) if total else 0.0
     gross_profit = float(pnl[pnl > 0].sum())
@@ -136,6 +138,8 @@ def summarize_results(results: pd.DataFrame) -> dict[str, float | int | None]:
         "losses": losses,
         "ties": ties,
         "win_rate_excluding_ties": (wins / settled) if settled else None,
+        "win_rate_ci95_lower": win_rate_ci_low,
+        "win_rate_ci95_upper": win_rate_ci_high,
         "break_even_win_rate_excluding_ties": break_even_rate,
         "profit_factor": profit_factor,
         "net_pnl_in_stake_units": total_pnl,

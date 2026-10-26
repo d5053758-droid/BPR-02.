@@ -52,6 +52,12 @@ def test_seconds_backtest_enters_after_bar_close_and_settles_three_seconds_after
     assert trade["pnl"] == pytest.approx(0.8)
     assert diagnostics["expiry_seconds"] == 3.0
     assert diagnostics["modeled_trades"] == 1
+    assert diagnostics["unmodeled_signals"] == 0
+    assert diagnostics["modeled_signal_fraction"] == pytest.approx(1.0)
+    assert diagnostics["quote_observations"] == 3
+    assert diagnostics["quote_span_seconds"] == pytest.approx(3.0)
+    assert diagnostics["quote_gap_median_seconds"] == pytest.approx(1.5)
+    assert diagnostics["quote_gap_max_seconds"] == pytest.approx(2.1)
     assert sum(diagnostics[key] for key in (
         "no_entry_quote", "stale_entry_quote", "no_settlement_quote", "stale_settlement_quote"
     )) == 0
@@ -219,3 +225,55 @@ def test_seconds_backtest_cli_writes_trade_file_and_two_source_manifest(tmp_path
     assert manifest["additional_sources"]["quotes"]["file_name"] == "quotes.csv"
     assert manifest["parameters"]["expiry_seconds"] == 3.0
     assert manifest["parameters"]["quote_source_label"] == "synthetic_test_feed"
+
+
+
+def test_seconds_cli_rejects_timezone_naive_ohlc_before_writing_outputs(tmp_path, capsys):
+    candles_path = tmp_path / "naive-candles.csv"
+    quotes_path = tmp_path / "quotes.csv"
+    output_path = tmp_path / "trades.csv"
+    manifest_path = tmp_path / "manifest.json"
+    candles_path.write_text(
+        "timestamp,open,high,low,close\n"
+        "2025-01-01 00:00:00,1.1,1.2,1.0,1.1\n"
+        "2025-01-01 00:01:00,1.1,1.2,1.0,1.1\n",
+        encoding="utf-8",
+    )
+    quotes_path.write_text(
+        "timestamp,price\n"
+        "2025-01-01T00:01:00Z,1.1\n"
+        "2025-01-01T00:01:03Z,1.2\n",
+        encoding="utf-8",
+    )
+    code = main([
+        str(candles_path), str(quotes_path),
+        "--output", str(output_path),
+        "--manifest-output", str(manifest_path),
+    ])
+    captured = capsys.readouterr()
+    assert code == 2
+    assert "timezone/UTC offset" in captured.err
+    assert not output_path.exists()
+    assert not manifest_path.exists()
+
+
+def test_seconds_cli_requires_descriptive_quote_source_label(tmp_path, capsys):
+    candles_path = tmp_path / "candles.csv"
+    quotes_path = tmp_path / "quotes.csv"
+    candles_path.write_text(
+        "timestamp,open,high,low,close\n"
+        "2025-01-01T00:00:00Z,1.1,1.2,1.0,1.1\n",
+        encoding="utf-8",
+    )
+    quotes_path.write_text(
+        "timestamp,price\n2025-01-01T00:01:00Z,1.1\n",
+        encoding="utf-8",
+    )
+    code = main([
+        str(candles_path), str(quotes_path), "--quote-source-label", "  ",
+        "--output", str(tmp_path / "trades.csv"),
+        "--manifest-output", str(tmp_path / "manifest.json"),
+    ])
+    captured = capsys.readouterr()
+    assert code == 2
+    assert "--quote-source-label" in captured.err

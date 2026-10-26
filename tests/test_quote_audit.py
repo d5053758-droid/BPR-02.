@@ -49,7 +49,7 @@ def test_quote_audit_reports_insufficient_observations_and_duration():
 
 def test_quote_audit_rejects_naive_duplicate_unsorted_and_invalid_prices():
     naive = quote_frame()
-    naive["timestamp"] = naive["timestamp"].astype(str).str.replace("Z", "", regex=False)
+    naive["timestamp"] = naive["timestamp"].astype(str).str.replace(r"[+-]\\d{2}:\\d{2}$", "", regex=True)
     with pytest.raises(ValueError, match="timezone"):
         audit_quote_series(naive)
 

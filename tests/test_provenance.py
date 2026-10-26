@@ -72,3 +72,43 @@ def test_manifest_rejects_empty_mode_and_negative_rows(tmp_path):
         build_run_manifest(source_path=source, mode="", parameters={}, outputs={})
     with pytest.raises(ValueError, match="rows"):
         build_run_manifest(source_path=source, mode="audit", parameters={}, outputs={}, rows=-1)
+
+
+
+def test_manifest_fingerprints_and_protects_additional_source_files(tmp_path):
+    source = tmp_path / "candles.csv"
+    quotes = tmp_path / "quotes.csv"
+    source.write_text("candle data", encoding="utf-8")
+    quotes.write_text("quote data", encoding="utf-8")
+    output = tmp_path / "trades.csv"
+    manifest_path = tmp_path / "manifest.json"
+    manifest = build_run_manifest(
+        source_path=source,
+        mode="seconds_expiry_research_only",
+        parameters={"expiry_seconds": 3},
+        outputs={"trades": output},
+        additional_sources={"quotes": quotes},
+    )
+    saved = json.loads(
+        write_run_manifest(manifest_path, manifest, source_path=source).read_text(encoding="utf-8")
+    )
+    assert saved["additional_sources"]["quotes"]["sha256"] == hashlib.sha256(quotes.read_bytes()).hexdigest()
+    assert saved["additional_sources"]["quotes"]["file_name"] == "quotes.csv"
+
+    with pytest.raises(ValueError, match="must not overwrite"):
+        write_run_manifest(quotes, manifest, source_path=source)
+
+
+def test_manifest_rejects_blank_additional_source_label(tmp_path):
+    source = tmp_path / "candles.csv"
+    source.write_text("input", encoding="utf-8")
+    quotes = tmp_path / "quotes.csv"
+    quotes.write_text("quotes", encoding="utf-8")
+    with pytest.raises(ValueError, match="labels"):
+        build_run_manifest(
+            source_path=source,
+            mode="audit",
+            parameters={},
+            outputs={},
+            additional_sources={" ": quotes},
+        )

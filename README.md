@@ -34,7 +34,7 @@ After installation, run:
 bpr02-smoke
 ```
 
-The command generates temporary, deliberately synthetic OHLC candles and timestamped quotes and checks CSV import/audit, EMA/ATR, candidate generation, fixed-expiry simulation, candle-based walk-forward, sensitivity analysis, quote temporal-quality audit, seconds-expiry simulation, seconds-expiry walk-forward evaluation, historical replay, signal-event logging, manual review journaling, and the disabled execution boundary. It deletes its temporary files on exit and does not require a market-data file, network access, broker credentials, or a Pocket Option connection.
+The command generates temporary, deliberately synthetic OHLC candles and timestamped quotes and checks CSV import/audit, EMA/ATR, candidate generation, fixed-expiry simulation, candle-based walk-forward, sensitivity analysis, quote temporal-quality audit, a mocked OTC candle API fetch, raw tick-log conversion, seconds-expiry simulation, seconds-expiry walk-forward evaluation, historical replay, signal-event logging, manual review journaling, and the disabled execution boundary. It deletes its temporary files on exit and does not require a market-data file, network access, broker credentials, or a Pocket Option connection.
 
 A successful result reports `status: passed`, the checks completed, and `orders_submitted: 0`. This is a software integration check only: the candles are synthetic, and passing the check does not demonstrate a profitable strategy or parity with any broker's OTC prices. GitHub Actions runs this command before the unit-test suite on Python 3.11 and 3.12.
 

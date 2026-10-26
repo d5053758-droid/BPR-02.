@@ -80,6 +80,193 @@ def _validate_symbols(symbols: Iterable[str]) -> list[str]:
     return cleaned
 
 
+
+SUPPORTED_OTC_TIMEFRAMES_SECONDS = (5, 15, 30, 60, 120, 180, 300, 600, 900, 1800, 3600, 14400)
+
+
+def fetch_historical_candles(
+    *,
+    api_key: str,
+    output_path: str | Path,
+    symbol: str = DEFAULT_SYMBOL,
+    timeframe_seconds: int = 5,
+    limit: int = 1500,
+    source_clock_ahead_seconds: int = DEFAULT_SOURCE_CLOCK_AHEAD_SECONDS,
+    overwrite: bool = False,
+    urlopen_fn: Callable[..., object] | None = None,
+) -> dict[str, object]:
+    """Fetch one read-only OTC candle-history page and convert its clock to UTC.
+
+    This one-request path can be used with an API key that permits candle
+    queries, including a free trial quota where available. It does not poll.
+    Five-second OHLC candles are useful for data-pipeline validation but cannot
+    determine the exact entry or settlement price of a three-second contract.
+    """
+    if not isinstance(api_key, str) or not api_key.strip():
+        raise ValueError("OTCHARTS_API_KEY must contain a non-empty API key")
+    if not isinstance(symbol, str) or not symbol.strip():
+        raise ValueError("symbol must be a non-empty instrument id")
+    if any(character in symbol for character in (",", "\n", "\r")):
+        raise ValueError(f"invalid symbol value: {symbol!r}")
+    if isinstance(timeframe_seconds, bool) or timeframe_seconds not in SUPPORTED_OTC_TIMEFRAMES_SECONDS:
+        raise ValueError(
+            "timeframe_seconds must be one of "
+            + ", ".join(str(item) for item in SUPPORTED_OTC_TIMEFRAMES_SECONDS)
+        )
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 1500:
+        raise ValueError("limit must be an integer between 1 and 1500 (one API page)")
+    if isinstance(source_clock_ahead_seconds, bool) or not isinstance(source_clock_ahead_seconds, int):
+        raise ValueError("source_clock_ahead_seconds must be an integer number of seconds")
+
+    target = Path(output_path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.exists() and not overwrite:
+        raise FileExistsError(
+            f"refusing to overwrite existing candle CSV: {target}; pass --overwrite"
+        )
+
+    query = urllib.parse.urlencode({
+        "venue": "otc",
+        "symbol": symbol.strip(),
+        "tf": timeframe_seconds,
+        "limit": limit,
+    })
+    request = urllib.request.Request(
+        f"{BASE_URL}/v1/candles?{query}",
+        headers={
+            "Authorization": f"Bearer {api_key.strip()}",
+            "Accept": "application/json",
+            "User-Agent": "BPR-02-read-only-candle-history/1.0",
+        },
+        method="GET",
+    )
+    opener = urlopen_fn or urllib.request.urlopen
+    try:
+        with opener(request, timeout=30) as response:
+            raw_body = response.read()
+    except urllib.error.HTTPError as exc:
+        raise ValueError(
+            f"OTCharts returned HTTP {exc.code}; confirm API key, venue access and request quota"
+        ) from exc
+    except urllib.error.URLError as exc:
+        raise ValueError(f"could not reach OTCharts candle endpoint: {exc.reason}") from exc
+
+    try:
+        payload = json.loads(raw_body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("OTCharts returned a response that is not valid UTF-8 JSON") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("OTCharts response must be a JSON object")
+    if payload.get("error") or payload.get("message") and not isinstance(payload.get("candles"), list):
+        raise ValueError(f"OTCharts rejected the candle query: {payload.get('error') or payload.get('message')}")
+    rows = payload.get("candles")
+    if not isinstance(rows, list) or not rows:
+        raise ValueError(
+            "OTCharts returned no candles; check whether EURUSD_otc is available, your API plan, and the requested timeframe"
+        )
+    if payload.get("symbol") and payload["symbol"] != symbol:
+        raise ValueError(
+            f"OTCharts returned symbol {payload['symbol']!r}, not requested symbol {symbol!r}"
+        )
+
+    candles_by_epoch: dict[int, dict[str, float]] = {}
+    reordered_rows = 0
+    last_raw_epoch: int | None = None
+    for row_number, item in enumerate(rows, start=1):
+        if not isinstance(item, dict):
+            raise ValueError(f"OTCharts candle row {row_number} must be an object")
+        try:
+            raw_time = item["time"]
+            if isinstance(raw_time, bool):
+                raise ValueError("boolean is not an epoch timestamp")
+            epoch = int(raw_time)
+            prices = {
+                name: float(item[name])
+                for name in ("open", "high", "low", "close")
+            }
+        except (KeyError, TypeError, ValueError, OverflowError) as exc:
+            raise ValueError(
+                f"OTCharts candle row {row_number} must include an epoch-second time and OHLC prices"
+            ) from exc
+        if any(not math.isfinite(price) or price <= 0 for price in prices.values()):
+            raise ValueError(f"OTCharts candle row {row_number} has non-finite or non-positive OHLC prices")
+        if prices["high"] < max(prices["open"], prices["close"], prices["low"]):
+            raise ValueError(f"OTCharts candle row {row_number} has an invalid high")
+        if prices["low"] > min(prices["open"], prices["close"], prices["high"]):
+            raise ValueError(f"OTCharts candle row {row_number} has an invalid low")
+        if last_raw_epoch is not None and epoch < last_raw_epoch:
+            reordered_rows += 1
+        last_raw_epoch = epoch
+        if epoch in candles_by_epoch:
+            raise ValueError(f"OTCharts returned duplicate candle timestamp {epoch}")
+        candles_by_epoch[epoch] = prices
+
+    ordered = sorted(
+        ((epoch - source_clock_ahead_seconds, prices) for epoch, prices in candles_by_epoch.items()),
+        key=lambda item: item[0],
+    )
+    gaps = [
+        right[0] - left[0]
+        for left, right in zip(ordered, ordered[1:])
+    ]
+    temporary = target.with_name(f".{target.name}.tmp")
+    try:
+        with temporary.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(["timestamp", "open", "high", "low", "close"])
+            for epoch, prices in ordered:
+                timestamp = datetime.fromtimestamp(
+                    epoch, tz=timezone.utc
+                ).isoformat().replace("+00:00", "Z")
+                writer.writerow([
+                    timestamp,
+                    format(prices["open"], ".12g"),
+                    format(prices["high"], ".12g"),
+                    format(prices["low"], ".12g"),
+                    format(prices["close"], ".12g"),
+                ])
+            handle.flush()
+            os.fsync(handle.fileno())
+        if target.exists() and not overwrite:
+            raise FileExistsError(
+                f"refusing to overwrite existing candle CSV: {target}; pass --overwrite"
+            )
+        os.replace(temporary, target)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+
+    first_epoch = ordered[0][0]
+    last_epoch = ordered[-1][0]
+    return {
+        "status": "completed",
+        "mode": "read_only_otc_candle_fetch",
+        "source": "OTCharts third-party market-data API",
+        "venue": "otc",
+        "symbol": symbol.strip(),
+        "timeframe_seconds": timeframe_seconds,
+        "raw_provider_rows": len(rows),
+        "output_candles": len(ordered),
+        "provider_count": payload.get("count"),
+        "provider_gaps": payload.get("gaps"),
+        "rows_reordered_to_chronology": reordered_rows,
+        "source_clock_ahead_seconds_subtracted": source_clock_ahead_seconds,
+        "start_timestamp_utc": datetime.fromtimestamp(first_epoch, tz=timezone.utc).isoformat(),
+        "end_timestamp_utc": datetime.fromtimestamp(last_epoch, tz=timezone.utc).isoformat(),
+        "span_seconds": last_epoch - first_epoch,
+        "maximum_observed_gap_seconds": max(gaps) if gaps else None,
+        "output_csv": str(target),
+        "output_sha256": sha256_file(target),
+        "output_bytes": target.stat().st_size,
+        "api_key_written_to_output": False,
+        "orders_submitted": 0,
+        "warning": (
+            "Read-only third-party candle data. Five-second OHLC bars cannot reconstruct exact "
+            "three-second entry or settlement prices and do not guarantee parity with the broker's "
+            "execution rules. Check the source clock adjustment against the platform."
+        ),
+    }
+
 def record_live_ticks(
     *,
     api_key: str,

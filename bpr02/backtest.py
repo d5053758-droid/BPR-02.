@@ -1,6 +1,7 @@
 """Conservative next-candle-open fixed-expiry backtester."""
 from __future__ import annotations
 
+from math import isfinite
 from typing import Literal
 
 import pandas as pd
@@ -9,6 +10,86 @@ from .signals import CALL, NO_TRADE, PUT
 from .statistics import wilson_interval
 
 TiePolicy = Literal["push", "loss"]
+
+
+def _validate_backtest_inputs(
+    candles: pd.DataFrame,
+    signals: pd.Series | pd.DataFrame,
+    *,
+    expiry_bars: int,
+    payout: float,
+    stake: float,
+    tie_policy: TiePolicy,
+) -> pd.Series:
+    """Fail closed on malformed candles, timestamps, parameters, or labels."""
+    if isinstance(expiry_bars, bool) or not isinstance(expiry_bars, int) or expiry_bars < 1:
+        raise ValueError("expiry_bars must be an integer >= 1")
+    if isinstance(payout, bool) or not isinstance(payout, (int, float)):
+        raise ValueError("payout must be a finite number between 0 and 1")
+    if not isfinite(float(payout)) or not 0 <= float(payout) <= 1:
+        raise ValueError("payout must be a finite number between 0 and 1")
+    if isinstance(stake, bool) or not isinstance(stake, (int, float)):
+        raise ValueError("stake must be a finite positive number")
+    if not isfinite(float(stake)) or float(stake) <= 0:
+        raise ValueError("stake must be a finite positive number")
+    if tie_policy not in ("push", "loss"):
+        raise ValueError("tie_policy must be 'push' or 'loss'")
+
+    required = {"timestamp", "open", "high", "low", "close"}
+    missing = sorted(required.difference(candles.columns))
+    if missing:
+        raise ValueError(f"candles must contain {sorted(required)}; missing {missing}")
+    if candles.empty:
+        raise ValueError("candles must contain at least one row")
+
+    try:
+        timestamps = pd.to_datetime(candles["timestamp"], errors="raise", utc=True)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"timestamps must be valid datetime values: {exc}") from exc
+    if timestamps.isna().any():
+        raise ValueError("timestamps must not be missing")
+    if timestamps.duplicated().any():
+        raise ValueError("timestamps must be unique; duplicate candle timestamp found")
+    if not timestamps.is_monotonic_increasing:
+        raise ValueError("candles must be chronologically sorted")
+
+    numeric: dict[str, pd.Series] = {}
+    for column in ("open", "high", "low", "close"):
+        try:
+            values = pd.to_numeric(candles[column], errors="raise")
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{column} prices must be numeric and finite") from exc
+        if values.isna().any():
+            raise ValueError(f"{column} prices must be numeric and finite")
+        if not values.map(lambda value: isfinite(float(value))).all():
+            raise ValueError(f"{column} prices must be numeric and finite")
+        numeric[column] = values.astype(float)
+
+    bad_high = numeric["high"] < pd.concat(
+        [numeric["open"], numeric["close"], numeric["low"]], axis=1
+    ).max(axis=1)
+    bad_low = numeric["low"] > pd.concat(
+        [numeric["open"], numeric["close"], numeric["high"]], axis=1
+    ).min(axis=1)
+    if (bad_high | bad_low).any():
+        rows = [int(index) + 1 for index in candles.index[bad_high | bad_low][:5]]
+        raise ValueError(f"invalid OHLC candle range at row(s): {rows}")
+
+    if isinstance(signals, pd.DataFrame):
+        if "signal" not in signals.columns:
+            raise ValueError("signals DataFrame must contain a 'signal' column")
+        signal_series = signals["signal"]
+    else:
+        signal_series = signals
+    if len(signal_series) != len(candles):
+        raise ValueError("signals and candles must have the same number of rows")
+
+    normalized = signal_series.astype(str).str.strip().str.upper()
+    permitted = {CALL, PUT, NO_TRADE}
+    invalid_labels = sorted(set(normalized.unique()).difference(permitted))
+    if invalid_labels:
+        raise ValueError(f"signals contain unsupported label(s): {invalid_labels}")
+    return normalized
 
 
 def backtest_fixed_expiry(
@@ -20,38 +101,31 @@ def backtest_fixed_expiry(
     stake: float = 1.0,
     tie_policy: TiePolicy = "push",
 ) -> pd.DataFrame:
-    """Backtest directional candidates against OHLC candles.
+    """Backtest directional candidates against validated OHLC candles.
 
     A signal on candle i is entered at candle i+1 open. For expiry_bars=1,
     settlement is the close of that entry candle. Higher expiry values settle
     at the close of a later candle. Payout is net profit per unit stake on a
     win; loss is -stake. A tie is zero by default or -stake if tie_policy=loss.
 
+    Direct callers receive the same structural validation as CSV-loaded inputs:
+    timestamps must be unique and chronological and every OHLC value finite.
     This assumes next-open fills and does not model OTC quote differences,
     latency, changing payouts or platform settlement. Research estimates only.
     """
-    if expiry_bars < 1:
-        raise ValueError("expiry_bars must be >= 1")
-    if not 0 <= payout <= 1:
-        raise ValueError("payout must be between 0 and 1")
-    if stake <= 0:
-        raise ValueError("stake must be > 0")
-    if tie_policy not in ("push", "loss"):
-        raise ValueError("tie_policy must be 'push' or 'loss'")
-    required = {"timestamp", "open", "close"}
-    if not required.issubset(candles.columns):
-        raise ValueError(f"candles must contain {sorted(required)}")
+    signal_series = _validate_backtest_inputs(
+        candles,
+        signals,
+        expiry_bars=expiry_bars,
+        payout=payout,
+        stake=stake,
+        tie_policy=tie_policy,
+    )
 
-    if isinstance(signals, pd.DataFrame):
-        if "signal" not in signals.columns:
-            raise ValueError("signals DataFrame must contain a 'signal' column")
-        signal_series = signals["signal"]
-    else:
-        signal_series = signals
-    if len(signal_series) != len(candles):
-        raise ValueError("signals and candles must have the same number of rows")
-
-    frame = candles.reset_index(drop=True)
+    frame = candles.copy().reset_index(drop=True)
+    frame["timestamp"] = pd.to_datetime(frame["timestamp"], errors="raise", utc=True)
+    for column in ("open", "high", "low", "close"):
+        frame[column] = pd.to_numeric(frame[column], errors="raise").astype(float)
     signal_series = signal_series.reset_index(drop=True)
     trades: list[dict[str, object]] = []
     for signal_idx, raw_signal in enumerate(signal_series):
@@ -71,13 +145,13 @@ def backtest_fixed_expiry(
             outcome = "WIN" if expiry_price < entry_price else "LOSS" if expiry_price > entry_price else "TIE"
 
         if outcome == "WIN":
-            pnl = stake * payout
+            pnl = float(stake) * float(payout)
         elif outcome == "TIE" and tie_policy == "push":
             pnl = 0.0
         else:
             if outcome == "TIE" and tie_policy == "loss":
                 outcome = "LOSS"
-            pnl = -stake
+            pnl = -float(stake)
 
         trades.append({
             "signal_timestamp": frame.at[signal_idx, "timestamp"],

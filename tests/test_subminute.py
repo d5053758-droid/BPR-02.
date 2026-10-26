@@ -58,6 +58,9 @@ def test_seconds_backtest_enters_after_bar_close_and_settles_three_seconds_after
     assert diagnostics["quote_span_seconds"] == pytest.approx(3.0)
     assert diagnostics["quote_gap_median_seconds"] == pytest.approx(1.5)
     assert diagnostics["quote_gap_max_seconds"] == pytest.approx(2.1)
+    assert diagnostics["quote_temporal_resolution_assessment"] == "low_temporal_resolution_for_requested_expiry"
+    assert diagnostics["quote_target_p95_gap_seconds"] == pytest.approx(0.75)
+    assert diagnostics["quote_resolution_assessment_is_heuristic"] is True
     assert sum(diagnostics[key] for key in (
         "no_entry_quote", "stale_entry_quote", "no_settlement_quote", "stale_settlement_quote"
     )) == 0
@@ -500,3 +503,75 @@ def test_seconds_cli_rejects_invalid_model_coverage_threshold(tmp_path, capsys, 
     captured = capsys.readouterr()
     assert code == 2
     assert "--min-model-coverage" in captured.err
+
+
+def test_seconds_cli_resolution_gate_saves_results_but_returns_three(tmp_path, capsys):
+    candles_path = tmp_path / "candles.csv"
+    quotes_path = tmp_path / "quotes.csv"
+    output_path = tmp_path / "seconds-trades.csv"
+    manifest_path = tmp_path / "seconds-manifest.json"
+
+    pd.DataFrame({
+        "timestamp": pd.date_range("2025-01-01T00:00:00Z", periods=5, freq="min"),
+        "open": [10.0, 10.0, 10.0, 8.5, 10.0],
+        "high": [11.0, 11.0, 11.0, 9.8, 12.0],
+        "low": [9.0, 9.5, 9.2, 8.0, 9.5],
+        "close": [10.0, 10.5, 10.0, 8.8, 10.5],
+    }).to_csv(candles_path, index=False)
+    quotes([
+        ("2025-01-01T00:05:00.100Z", 10.0),
+        ("2025-01-01T00:05:03.100Z", 10.5),
+    ]).to_csv(quotes_path, index=False)
+
+    code = main([
+        str(candles_path), str(quotes_path),
+        "--lookback", "3",
+        "--expiry-seconds", "3",
+        "--max-quote-delay-seconds", "0.25",
+        "--min-model-coverage", "0.95",
+        "--max-quote-p95-gap-seconds", "0.5",
+        "--output", str(output_path),
+        "--manifest-output", str(manifest_path),
+        "--quote-source-label", "synthetic_test_feed",
+    ])
+    captured = capsys.readouterr()
+    result = json.loads(captured.out)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert result["candidate_signals"] == 1
+    assert result["modeled_trades"] == 1
+    assert result["model_coverage_gate_passed"] is True
+    assert result["quote_temporal_resolution_assessment"] == "low_temporal_resolution_for_requested_expiry"
+    assert result["quote_resolution_gate_enforced"] is True
+    assert result["quote_resolution_gate_passed"] is False
+    assert result["all_quality_gates_passed"] is False
+    assert code == 3
+    assert "QUOTE RESOLUTION THRESHOLD NOT MET" in captured.err
+    assert output_path.exists()
+    assert manifest["summary"]["quote_resolution_gate_passed"] is False
+    assert manifest["summary"]["max_quote_p95_gap_seconds"] == pytest.approx(0.5)
+
+
+@pytest.mark.parametrize("threshold", [-0.1, float("nan"), float("inf")])
+def test_seconds_cli_rejects_invalid_quote_resolution_gate(tmp_path, capsys, threshold):
+    candles_path = tmp_path / "candles.csv"
+    quotes_path = tmp_path / "quotes.csv"
+    candles_path.write_text(
+        "timestamp,open,high,low,close\\n"
+        "2025-01-01T00:00:00Z,1.1,1.2,1.0,1.1\\n"
+        "2025-01-01T00:01:00Z,1.1,1.2,1.0,1.1\\n",
+        encoding="utf-8",
+    )
+    quotes_path.write_text(
+        "timestamp,price\\n2025-01-01T00:01:00Z,1.1\\n"
+        "2025-01-01T00:01:03Z,1.2\\n",
+        encoding="utf-8",
+    )
+    code = main([
+        str(candles_path), str(quotes_path),
+        "--max-quote-p95-gap-seconds", str(threshold),
+        "--output", str(tmp_path / "trades.csv"),
+        "--manifest-output", str(tmp_path / "manifest.json"),
+    ])
+    captured = capsys.readouterr()
+    assert code == 2
+    assert "--max-quote-p95-gap-seconds" in captured.err

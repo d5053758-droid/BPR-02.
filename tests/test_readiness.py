@@ -168,6 +168,7 @@ def test_maximum_quote_gap_is_visible_but_unenforced_by_default(tmp_path, capsys
     code = main([
         str(candles), "--quotes-csv", str(quotes),
         "--expected-interval-seconds", "60",
+        "--lookback", "2",
         "--output", str(output),
     ])
     capsys.readouterr()

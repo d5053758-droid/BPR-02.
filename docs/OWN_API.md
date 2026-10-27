@@ -70,3 +70,22 @@ bash scripts/check_otcharts_auth.sh
 ```
 
 La clave se solicita de forma oculta y no se imprime. El script consulta únicamente `GET /v1/usage`, que la documentación del proveedor indica que no consume la cuota que devuelve. Informa el código HTTP, el plan y el saldo de solicitudes sin mostrar la clave. Si devuelve `401`, revisa el correo confirmado y crea una clave nueva desde la cuenta si la anterior se perdió o fue revocada. No pegues la clave en GitHub, en el chat ni en archivos del repositorio.
+
+
+## Un solo comando para preparar los datos y abrir la API
+
+Desde la raíz de Codespaces, ejecuta:
+
+```bash
+git pull && bash scripts/start_bpr02.sh
+```
+
+El script instala el paquete, solicita la clave OTCharts de forma oculta solo si aún no existe el CSV, comprueba `GET /v1/usage` (no consume la cuota de datos), pide como máximo una página de 1.500 velas de 5 segundos, genera un informe de calidad y arranca el servidor local. Si ya hay un CSV, no vuelve a descargarlo ni consume otra solicitud. Si la autenticación falla, se detiene antes de pedir velas y muestra el código HTTP sin revelar la clave.
+
+El servidor escucha solamente en `127.0.0.1:8000`. En Codespaces se puede abrir el puerto 8000 desde la pestaña **Ports** y mantenerlo como **Private**. No publiques el puerto y no configures `0.0.0.0` sin token de API. Para detener el servidor, usa Ctrl+C. La API sirve archivos locales; no implica que haya un flujo continuo. El plan gratuito de OTCharts no incluye streaming en vivo.
+
+Si necesitas comprobar solo la clave, sin descargar velas ni abrir el servidor:
+
+```bash
+bash scripts/check_otcharts_auth.sh
+```

@@ -216,10 +216,13 @@ def test_seconds_backtest_cli_writes_trade_file_and_two_source_manifest(tmp_path
         "--output", str(output_path),
         "--manifest-output", str(manifest_path),
         "--quote-source-label", "synthetic_test_feed",
+        "--min-modeled-trades", "1",
     ])
 
-    result = json.loads(capsys.readouterr().out)
+    captured = capsys.readouterr()
+    result = json.loads(captured.out)
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert captured.err == ""
     assert code == 0
     assert result["mode"] == "seconds_expiry_research_only"
     assert result["orders_submitted"] == 0
@@ -399,6 +402,7 @@ def test_seconds_walk_forward_cli_writes_oos_results_and_fold_manifest(tmp_path,
         "--fold-summary", str(fold_path),
         "--manifest-output", str(manifest_path),
         "--quote-source-label", "synthetic_test_feed",
+        "--min-modeled-trades", "1",
     ])
 
     result = json.loads(capsys.readouterr().out)
@@ -533,6 +537,7 @@ def test_seconds_cli_resolution_gate_saves_results_but_returns_three(tmp_path, c
         "--max-quote-delay-seconds", "0.25",
         "--min-model-coverage", "0.95",
         "--max-quote-p95-gap-seconds", "0.5",
+        "--min-modeled-trades", "1",
         "--output", str(output_path),
         "--manifest-output", str(manifest_path),
         "--quote-source-label", "synthetic_test_feed",
@@ -578,3 +583,73 @@ def test_seconds_cli_rejects_invalid_quote_resolution_gate(tmp_path, capsys, thr
     captured = capsys.readouterr()
     assert code == 2
     assert "--max-quote-p95-gap-seconds" in captured.err
+
+
+
+def test_seconds_cli_minimum_modeled_trades_gate_saves_results_but_returns_three(tmp_path, capsys):
+    candles_path = tmp_path / "candles.csv"
+    quotes_path = tmp_path / "quotes.csv"
+    output_path = tmp_path / "trades.csv"
+    manifest_path = tmp_path / "manifest.json"
+
+    pd.DataFrame({
+        "timestamp": pd.date_range("2025-01-01T00:00:00Z", periods=5, freq="min"),
+        "open": [10.0, 10.0, 10.0, 8.5, 10.0],
+        "high": [11.0, 11.0, 11.0, 9.8, 12.0],
+        "low": [9.0, 9.5, 9.2, 8.0, 9.5],
+        "close": [10.0, 10.5, 10.0, 8.8, 10.5],
+    }).to_csv(candles_path, index=False)
+    quotes([
+        ("2025-01-01T00:05:00.100Z", 10.0),
+        ("2025-01-01T00:05:03.100Z", 10.5),
+    ]).to_csv(quotes_path, index=False)
+
+    code = main([
+        str(candles_path), str(quotes_path),
+        "--lookback", "3",
+        "--expiry-seconds", "3",
+        "--max-quote-delay-seconds", "0.25",
+        "--min-modeled-trades", "2",
+        "--output", str(output_path),
+        "--manifest-output", str(manifest_path),
+        "--quote-source-label", "synthetic_test_feed",
+    ])
+    captured = capsys.readouterr()
+    result = json.loads(captured.out)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    assert code == 3
+    assert result["modeled_trades"] == 1
+    assert result["model_coverage_gate_passed"] is True
+    assert result["modeled_trade_count_gate_passed"] is False
+    assert result["minimum_modeled_trades"] == 2
+    assert result["all_quality_gates_passed"] is False
+    assert "MINIMUM MODELED TRADE COUNT NOT MET" in captured.err
+    assert output_path.exists()
+    assert manifest["parameters"]["min_modeled_trades"] == 2
+    assert manifest["summary"]["modeled_trade_count_gate_passed"] is False
+    assert manifest["summary"]["all_quality_gates_passed"] is False
+
+
+def test_seconds_cli_rejects_minimum_modeled_trades_below_one(tmp_path, capsys):
+    candles_path = tmp_path / "candles.csv"
+    quotes_path = tmp_path / "quotes.csv"
+    candles_path.write_text(
+        "timestamp,open,high,low,close\\n"
+        "2025-01-01T00:00:00Z,1.1,1.2,1.0,1.1\\n"
+        "2025-01-01T00:01:00Z,1.1,1.2,1.0,1.1\\n",
+        encoding="utf-8",
+    )
+    quotes_path.write_text(
+        "timestamp,price\\n2025-01-01T00:01:00Z,1.1\\n",
+        encoding="utf-8",
+    )
+    code = main([
+        str(candles_path), str(quotes_path),
+        "--min-modeled-trades", "0",
+        "--output", str(tmp_path / "trades.csv"),
+        "--manifest-output", str(tmp_path / "manifest.json"),
+    ])
+    captured = capsys.readouterr()
+    assert code == 2
+    assert "--min-modeled-trades" in captured.err

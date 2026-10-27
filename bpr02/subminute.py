@@ -646,6 +646,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=0.95,
         help="Minimum share of candidate signals with modeled entry and settlement quotes; exits 3 if unmet",
     )
+    parser.add_argument(
+        "--min-modeled-trades",
+        type=int,
+        default=30,
+        help="Minimum number of modeled outcomes required before a run is marked quality-gate-passed; exits 3 if unmet",
+    )
     parser.add_argument("--payout", type=float, default=0.80)
     parser.add_argument("--stake", type=float, default=1.0)
     parser.add_argument("--tie-policy", choices=("push", "loss"), default="push")
@@ -714,6 +720,8 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError("--quote-source-label must be a non-empty descriptive label")
         if not math.isfinite(args.min_model_coverage) or not 0 <= args.min_model_coverage <= 1:
             raise ValueError("--min-model-coverage must be between 0 and 1")
+        if args.min_modeled_trades < 1:
+            raise ValueError("--min-modeled-trades must be an integer >= 1")
         if args.max_quote_p95_gap_seconds is not None and (
             not math.isfinite(args.max_quote_p95_gap_seconds)
             or args.max_quote_p95_gap_seconds < 0
@@ -742,6 +750,7 @@ def main(argv: list[str] | None = None) -> int:
             "tie_policy": args.tie_policy,
             "quote_source_label": args.quote_source_label,
             "min_model_coverage": args.min_model_coverage,
+            "min_modeled_trades": args.min_modeled_trades,
         }
 
         if args.walk_forward:
@@ -834,6 +843,7 @@ def main(argv: list[str] | None = None) -> int:
             and model_coverage is not None
             and float(model_coverage) >= args.min_model_coverage
         )
+        modeled_trade_count_gate_passed = len(trades) >= args.min_modeled_trades
         p95_gap = diagnostics.get("quote_gap_p95_seconds")
         quote_resolution_gate_enforced = args.max_quote_p95_gap_seconds is not None
         quote_resolution_gate_passed = (
@@ -846,15 +856,19 @@ def main(argv: list[str] | None = None) -> int:
         # Only enforced gates contribute to this combined pass/fail value.
         all_quality_gates_passed = (
             model_coverage_gate_passed
+            and modeled_trade_count_gate_passed
             and (
                 not quote_resolution_gate_enforced
                 or quote_resolution_gate_passed is True
             )
         )
         manifest["parameters"]["min_model_coverage"] = args.min_model_coverage
+        manifest["parameters"]["min_modeled_trades"] = args.min_modeled_trades
         manifest["parameters"]["max_quote_p95_gap_seconds"] = args.max_quote_p95_gap_seconds
         manifest["summary"]["model_coverage_gate_passed"] = model_coverage_gate_passed
         manifest["summary"]["minimum_model_coverage"] = args.min_model_coverage
+        manifest["summary"]["modeled_trade_count_gate_passed"] = modeled_trade_count_gate_passed
+        manifest["summary"]["minimum_modeled_trades"] = args.min_modeled_trades
         manifest["summary"]["quote_resolution_gate_enforced"] = quote_resolution_gate_enforced
         manifest["summary"]["quote_resolution_gate_passed"] = quote_resolution_gate_passed
         manifest["summary"]["max_quote_p95_gap_seconds"] = args.max_quote_p95_gap_seconds
@@ -869,6 +883,8 @@ def main(argv: list[str] | None = None) -> int:
             **extra_result,
             "model_coverage_gate_passed": model_coverage_gate_passed,
             "minimum_model_coverage": args.min_model_coverage,
+            "modeled_trade_count_gate_passed": modeled_trade_count_gate_passed,
+            "minimum_modeled_trades": args.min_modeled_trades,
             "quote_resolution_gate_enforced": quote_resolution_gate_enforced,
             "quote_resolution_gate_passed": quote_resolution_gate_passed,
             "max_quote_p95_gap_seconds": args.max_quote_p95_gap_seconds,
@@ -881,6 +897,9 @@ def main(argv: list[str] | None = None) -> int:
                 "MODEL COVERAGE GATE FAILED: too few candidate signals had usable entry and settlement quotes. "
                 "Treat win rate and P/L as incomplete; inspect unmodeled signals and quote gaps."
                 if not model_coverage_gate_passed else
+                f"MINIMUM MODELED TRADE COUNT GATE FAILED: {len(trades)} modeled outcomes; "
+                f"at least {args.min_modeled_trades} are required. The small sample is not suitable for strong inference."
+                if not modeled_trade_count_gate_passed else
                 "QUOTE RESOLUTION GATE FAILED: the quote p95 interval exceeded the configured limit or could not be measured. "
                 "Treat three-second results as insufficiently resolved until higher-quality timestamps are available."
             ),
@@ -892,7 +911,13 @@ def main(argv: list[str] | None = None) -> int:
                 f"minimum required is {args.min_model_coverage:.3f}",
                 file=sys.stderr,
             )
-        if not quote_resolution_gate_passed:
+        if not modeled_trade_count_gate_passed:
+            print(
+                f"MINIMUM MODELED TRADE COUNT NOT MET: {len(trades)} modeled outcomes; "
+                f"minimum required is {args.min_modeled_trades}",
+                file=sys.stderr,
+            )
+        if quote_resolution_gate_enforced and not quote_resolution_gate_passed:
             print(
                 f"QUOTE RESOLUTION THRESHOLD NOT MET: p95 gap {p95_gap!r}s; "
                 f"maximum configured is {args.max_quote_p95_gap_seconds!r}s",

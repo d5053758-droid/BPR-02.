@@ -367,3 +367,17 @@ Choose `review` to mark an alert for manual inspection or `ignore` to dismiss it
 - `bpr02/audit.py`: timestamp-interval, gap and OHLC diagnostics.
 - `bpr02/cli.py`: command-line interface.
 - `tests/`: regression tests.
+
+
+## Local read-only API
+
+BPR-02 also includes a local read-only HTTP API that serves **only real files already recorded on disk**. It does not create market prices and does not connect to a Pocket Option account.
+
+Install and start it from the repository root:
+
+```bash
+python -m pip install -e ".[test]"
+bpr02-api
+```
+
+By default it listens only on `127.0.0.1:8000`. Available routes are `/health`, `/v1/candles`, `/v1/quality` and `/v1/ticks/latest`. When no dataset exists, the API reports missing data instead of generating synthetic prices. Full setup, configuration and security notes are in [docs/OWN_API.md](docs/OWN_API.md). The API has no trading/order routes.

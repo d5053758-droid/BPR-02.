@@ -586,6 +586,85 @@ def test_seconds_cli_rejects_invalid_quote_resolution_gate(tmp_path, capsys, thr
 
 
 
+def test_walk_forward_resolution_gate_uses_test_fold_quotes_not_dense_quotes_elsewhere(tmp_path, capsys, monkeypatch):
+    candles_path = tmp_path / "candles.csv"
+    quotes_path = tmp_path / "quotes.csv"
+    output_path = tmp_path / "oos-trades.csv"
+    folds_path = tmp_path / "folds.csv"
+    manifest_path = tmp_path / "manifest.json"
+
+    candle_times = pd.date_range("2025-01-01T00:00:00Z", periods=6, freq="min")
+    pd.DataFrame({
+        "timestamp": candle_times,
+        "open": [1.1] * 6,
+        "high": [1.101] * 6,
+        "low": [1.099] * 6,
+        "close": [1.1005] * 6,
+    }).to_csv(candles_path, index=False)
+
+    # The full file is dense before and after the test window, but the relevant
+    # out-of-sample fold has only entry/settlement quotes separated by 3 seconds.
+    dense_before = pd.date_range(
+        "2025-01-01T00:00:00Z", "2025-01-01T00:01:59.500Z", freq="500ms"
+    )
+    sparse_test_quotes = pd.to_datetime(
+        ["2025-01-01T00:03:00Z", "2025-01-01T00:03:03Z"], utc=True
+    )
+    dense_after = pd.date_range(
+        "2025-01-01T00:08:00Z", "2025-01-01T00:10:00Z", freq="500ms"
+    )
+    quote_times = dense_before.append(sparse_test_quotes).append(dense_after)
+    pd.DataFrame({
+        "timestamp": quote_times,
+        "price": [1.1 + index * 0.000001 for index in range(len(quote_times))],
+    }).to_csv(quotes_path, index=False)
+
+    # Pin the signal stream to one causal candidate inside the first test fold.
+    import bpr02.subminute as subminute_module
+    monkeypatch.setattr(
+        subminute_module,
+        "sweep_reclaim_signals",
+        lambda frame, lookback: pd.DataFrame({
+            "signal": ["NO TRADE", "NO TRADE", "CALL", "NO TRADE", "NO TRADE", "NO TRADE"]
+        }),
+    )
+
+    code = main([
+        str(candles_path), str(quotes_path),
+        "--bar-seconds", "60",
+        "--expiry-seconds", "3",
+        "--max-quote-delay-seconds", "0.25",
+        "--walk-forward",
+        "--initial-train-size", "2",
+        "--test-size", "2",
+        "--step-size", "2",
+        "--min-model-coverage", "1.0",
+        "--min-modeled-trades", "1",
+        "--max-quote-p95-gap-seconds", "0.75",
+        "--output", str(output_path),
+        "--fold-summary", str(folds_path),
+        "--manifest-output", str(manifest_path),
+        "--quote-source-label", "synthetic_sparse_oos_test",
+    ])
+    captured = capsys.readouterr()
+    result = json.loads(captured.out)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    assert result["candidate_signals"] == 1
+    assert result["modeled_trades"] == 1
+    assert result["quote_gap_p95_seconds"] < 0.75
+    assert result["out_of_sample_quote_gap_p95_seconds"] > 0.75
+    assert result["out_of_sample_quote_p95_measurement_complete"] is True
+    assert result["quote_resolution_gate_scope"] == "out_of_sample_test_folds"
+    assert result["quote_resolution_gate_p95_gap_seconds"] > 0.75
+    assert result["quote_resolution_gate_passed"] is False
+    assert result["all_quality_gates_passed"] is False
+    assert code == 3
+    assert "QUOTE RESOLUTION THRESHOLD NOT MET" in captured.err
+    assert manifest["summary"]["quote_resolution_gate_scope"] == "out_of_sample_test_folds"
+    assert manifest["summary"]["quote_resolution_gate_passed"] is False
+
+
 def test_seconds_cli_minimum_modeled_trades_gate_saves_results_but_returns_three(tmp_path, capsys):
     candles_path = tmp_path / "candles.csv"
     quotes_path = tmp_path / "quotes.csv"

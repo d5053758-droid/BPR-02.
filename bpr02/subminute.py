@@ -569,6 +569,34 @@ def run_seconds_walk_forward(
     fold_metrics = pd.DataFrame(metric_rows)
     total_candidates = int(fold_metrics["candidate_signals"].sum())
     modeled_trades = int(len(all_trades))
+    # The full input quote file can include dense training-period or unrelated
+    # observations. For a walk-forward resolution gate, use the worst measured
+    # p95 gap among test folds that actually contain candidate signals. If any
+    # such fold cannot measure p95, fail closed rather than borrowing quality
+    # from quotes outside that fold.
+    candidate_fold_metrics = fold_metrics[fold_metrics["candidate_signals"] > 0]
+    candidate_fold_p95 = pd.to_numeric(
+        candidate_fold_metrics["quote_gap_p95_seconds"], errors="coerce"
+    )
+    out_of_sample_quote_p95_complete = bool(
+        not candidate_fold_metrics.empty and candidate_fold_p95.notna().all()
+    )
+    out_of_sample_quote_gap_p95 = (
+        float(candidate_fold_p95.max()) if out_of_sample_quote_p95_complete else None
+    )
+    out_of_sample_quote_observations = int(
+        candidate_fold_metrics["quote_observations"].sum()
+    )
+    out_of_sample_quote_span_seconds = float(
+        candidate_fold_metrics["quote_span_seconds"].sum()
+    )
+    out_of_sample_resolution_screen = assess_quote_temporal_resolution(
+        observations=out_of_sample_quote_observations,
+        span_seconds=out_of_sample_quote_span_seconds,
+        p95_gap_seconds=out_of_sample_quote_gap_p95,
+        expiry_seconds=expiry,
+        target_resolution_fraction=0.25,
+    )
     aggregate_counters = {
         name: int(fold_metrics[name].sum())
         for name in counter_names
@@ -605,6 +633,14 @@ def run_seconds_walk_forward(
         "quote_target_p95_gap_seconds": aggregate_resolution_screen["target_p95_gap_seconds"],
         "quote_resolution_fraction_of_expiry": aggregate_resolution_screen["target_resolution_fraction_of_expiry"],
         "quote_resolution_assessment_is_heuristic": aggregate_resolution_screen["assessment_is_heuristic"],
+        "out_of_sample_quote_observations": out_of_sample_quote_observations,
+        "out_of_sample_quote_span_seconds": out_of_sample_quote_span_seconds,
+        "out_of_sample_quote_gap_p95_seconds": out_of_sample_quote_gap_p95,
+        "out_of_sample_quote_p95_measurement_complete": out_of_sample_quote_p95_complete,
+        "out_of_sample_quote_resolution_folds": int(len(candidate_fold_metrics)),
+        "out_of_sample_quote_temporal_resolution_assessment": (
+            out_of_sample_resolution_screen["temporal_resolution_assessment"]
+        ),
         **aggregate_counters,
         "bar_seconds": bars_seconds,
         "bar_timestamp_label": bar_timestamp_label,
@@ -844,7 +880,14 @@ def main(argv: list[str] | None = None) -> int:
             and float(model_coverage) >= args.min_model_coverage
         )
         modeled_trade_count_gate_passed = len(trades) >= args.min_modeled_trades
-        p95_gap = diagnostics.get("quote_gap_p95_seconds")
+        quote_resolution_gate_scope = (
+            "out_of_sample_test_folds" if args.walk_forward else "full_input_quote_series"
+        )
+        p95_gap = (
+            diagnostics.get("out_of_sample_quote_gap_p95_seconds")
+            if args.walk_forward
+            else diagnostics.get("quote_gap_p95_seconds")
+        )
         quote_resolution_gate_enforced = args.max_quote_p95_gap_seconds is not None
         quote_resolution_gate_passed = (
             (
@@ -872,6 +915,8 @@ def main(argv: list[str] | None = None) -> int:
         manifest["summary"]["quote_resolution_gate_enforced"] = quote_resolution_gate_enforced
         manifest["summary"]["quote_resolution_gate_passed"] = quote_resolution_gate_passed
         manifest["summary"]["max_quote_p95_gap_seconds"] = args.max_quote_p95_gap_seconds
+        manifest["summary"]["quote_resolution_gate_scope"] = quote_resolution_gate_scope
+        manifest["summary"]["quote_resolution_gate_p95_gap_seconds"] = p95_gap
         manifest["summary"]["all_quality_gates_passed"] = all_quality_gates_passed
         write_run_manifest(manifest_path, manifest, source_path=candles_path)
         result = {
@@ -888,6 +933,8 @@ def main(argv: list[str] | None = None) -> int:
             "quote_resolution_gate_enforced": quote_resolution_gate_enforced,
             "quote_resolution_gate_passed": quote_resolution_gate_passed,
             "max_quote_p95_gap_seconds": args.max_quote_p95_gap_seconds,
+            "quote_resolution_gate_scope": quote_resolution_gate_scope,
+            "quote_resolution_gate_p95_gap_seconds": p95_gap,
             "all_quality_gates_passed": all_quality_gates_passed,
             "orders_submitted": 0,
             "warning": (

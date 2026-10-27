@@ -19,6 +19,6 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
       - run: python -m pip install -e ".[test]"
-      - run: bash -n scripts/first_otc_data_run.sh
+      - run: bash -n scripts/first_otc_data_run.sh scripts/check_otcharts_auth.sh scripts/start_bpr02.sh
       - run: bpr02-smoke
       - run: python -m pytest

@@ -1,0 +1,29 @@
+name: Package BPR-02 source ZIP
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/package-source.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  package-source:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Build source archive
+        run: |
+          git archive --format=zip --prefix=BPR-02/ HEAD -o BPR-02-source.zip
+          sha256sum BPR-02-source.zip
+      - name: Upload ZIP artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BPR-02-source
+          path: BPR-02-source.zip
+          if-no-files-found: error
+          retention-days: 7

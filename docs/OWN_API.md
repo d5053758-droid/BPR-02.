@@ -60,3 +60,13 @@ Se pueden cambiar con `BPR02_API_CANDLES`, `BPR02_API_CANDLES_REPORT` y `BPR02_A
 ## Límites de interpretación
 
 La API valida formato, tiempos y rangos OHLC; eso no demuestra autenticidad ni coincidencia de precios con la terminal de Pocket Option. Los datos de EUR/USD convencional no equivalen a EUR/USD OTC. Las velas de 5 segundos tampoco permiten reconstruir un precio de liquidación exacto a 3 segundos. Esas hipótesis requieren una fuente autorizada, paridad medida y validación aparte.
+
+## Comprobar la clave de OTCharts sin consumir la cuota
+
+Antes de descargar velas, ejecuta:
+
+```bash
+bash scripts/check_otcharts_auth.sh
+```
+
+La clave se solicita de forma oculta y no se imprime. El script consulta únicamente `GET /v1/usage`, que la documentación del proveedor indica que no consume la cuota que devuelve. Informa el código HTTP, el plan y el saldo de solicitudes sin mostrar la clave. Si devuelve `401`, revisa el correo confirmado y crea una clave nueva desde la cuenta si la anterior se perdió o fue revocada. No pegues la clave en GitHub, en el chat ni en archivos del repositorio.

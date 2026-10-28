@@ -11,6 +11,7 @@ import hmac
 import json
 import os
 import sys
+from datetime import datetime, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -19,7 +20,7 @@ from .whatsapp_alerts import WhatsAppDeliveryError, WhatsAppTemplateNotifier
 
 MAX_REQUEST_BYTES = 16_384
 ALLOWED_SIGNALS = {"CALL", "PUT", "NO TRADE"}
-REQUIRED_TEXT_FIELDS = ("analysis_id", "symbol", "timeframe", "timestamp", "signal", "reason")
+REQUIRED_TEXT_FIELDS = ("analysis_id", "symbol", "timeframe", "signal", "reason")
 OPTIONAL_TEXT_FIELDS = ("entry_trigger", "expiry", "confirmation", "invalidation")
 
 
@@ -36,6 +37,7 @@ def _validate_image_analysis(payload: object) -> dict[str, object]:
         "source": "chatgpt_image_analysis",
         "mode": "research_only",
         "orders_submitted": 0,
+        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
     for field in REQUIRED_TEXT_FIELDS:
         value = payload.get(field)

@@ -1,109 +1,80 @@
-# Image-driven ChatGPT -> WhatsApp alerts
+# BPR-02 mobile screenshot -> WhatsApp
 
-This service is for the specific workflow in which a user uploads a chart screenshot to a configured Custom GPT, the GPT visually analyzes that image, and only then calls the API to send the result to the user's WhatsApp. It is **not** a continuous market-alert service. A text-only chat turn must not call the action.
+## What this provides
 
-The API receives the GPT's *analysis*, not the original image. Visual inspection happens in ChatGPT; the service cannot independently inspect or prove that a screenshot was attached. The Custom GPT instructions and an authenticated action token are therefore part of the safety boundary.
+Because an ordinary ChatGPT conversation cannot directly invoke an arbitrary outbound webhook from a user's image upload, this repository provides a separate, phone-friendly upload page. Open it, select a chart screenshot, and tap **Analizar captura y enviar WhatsApp**. The service receives the actual image bytes, sends them to OpenAI's vision-capable Responses API for analysis, validates the resulting structured fields, and only then sends an approved WhatsApp template message.
 
-## Architecture
+This changes one part of the experience: the screenshot must be uploaded to the BPR-02 page, not to the ordinary ChatGPT conversation. It cannot automatically react to an image uploaded in this chat. The ChatGPT account's vision subscription is not reused by this page; OpenAI API usage is billed separately under the API account. See [OpenAI image and vision inputs](https://developers.openai.com/api/docs/guides/images-vision) and [current API pricing](https://platform.openai.com/pricing).
 
-1. User uploads an image of the trading chart to the configured Custom GPT.
-2. The GPT inspects the image and prepares a cautious result in the required structure.
-3. The GPT action calls `POST /v1/image-analysis`, authenticated with `BPR02_IMAGE_ALERT_ACTION_TOKEN`, and passes `image_attached: true`.
-4. The endpoint validates the payload and sends the analysis using Meta's official WhatsApp Cloud API.
-5. The endpoint responds with the delivery request status. Meta's acceptance is not proof the handset received/read the message.
+The endpoint does not accept a text-only alert as a substitute for an image. `POST /v1/analyze-image` requires a base64 PNG/JPEG/WEBP data URL and an explicit `image_attached: true` assertion; the server validates the image signature and byte size, performs visual analysis, and sends nothing if analysis fails. The vision prompt defaults to NO TRADE if the screenshot is unclear, stale, not a chart, or lacks enough visible evidence. The app does not place or manage orders.
 
-No screenshot means no call to this action and therefore no WhatsApp message. The endpoint also rejects a payload that lacks `image_attached: true` or the `chatgpt_image_analysis` source label. It accepts `CALL`, `PUT`, or `NO TRADE`, so a visible but inconclusive chart can still produce a useful NO TRADE report. It never submits a trading order.
+## 1. WhatsApp Business configuration
 
-**Important boundary:** this does not turn the existing ordinary chat into an outgoing WhatsApp integration. For ChatGPT to call an external API action, configure the OpenAPI schema in a Custom GPT that supports Actions, then upload screenshots in that GPT. The ordinary chat in which these files are being edited does not gain the action automatically. See [OpenAI's GPT Actions overview](https://developers.openai.com/api/docs/actions/introduction) and [configuration guide](https://help.openai.com/en/articles/9442513-configuring-actions-in-gpts).
+In Meta's WhatsApp Business Platform / Cloud API:
 
-**Account limitation (checked 28 October 2026):** OpenAI's current Help Center says personal ChatGPT accounts—including Free, Go, Plus and Pro—cannot create or publish new GPTs. If you do not already have an eligible Custom GPT that can be edited, this route cannot be activated from a personal account alone. In that case, a separate mobile-friendly upload app backed by the vision/API service is the practical alternative, but it would not be this same chat. See [OpenAI's current GPT creation availability](https://help.openai.com/en/articles/8554397-creating-and-editing-gpts).
+1. Set up a business sender and get its **Phone Number ID** (different from the displayed phone number).
+2. Create and obtain approval for a template, e.g. `bpr02_image_analysis`, with exactly one body text placeholder `{{1}}`.
+3. Confirm that the intended recipient has opted in to receive these notifications.
+4. Save the access token securely; do not paste credentials into this conversation or commit them to GitHub.
 
-## Configure WhatsApp Cloud API first
+Required variables:
 
-In Meta's WhatsApp Business Platform:
-
-1. Set up a WhatsApp Business/Cloud API sender and identify its **Phone Number ID**.
-2. Create and obtain approval for a message template, such as `bpr02_image_analysis`, with exactly one body text placeholder `{{1}}`.
-3. Confirm the recipient has opted in to receive the messages.
-4. Keep access tokens and other credentials out of source control and conversation messages.
-
-The current template sender puts the full compact analysis into that one template variable. The template name and language configured here must match a template approved in the Meta account. Messages initiated by the business are subject to WhatsApp's current template and customer-service-window rules. See [Meta's WhatsApp Cloud API documentation](https://developers.facebook.com/docs/whatsapp/cloud-api).
-
-Required environment variables:
-
-- `BPR02_IMAGE_ALERT_ACTION_TOKEN`: a long random secret used to authenticate the GPT action. Configure the same value in the Custom GPT Action's Bearer API Key authentication.
-- `WHATSAPP_ACCESS_TOKEN`: secret Meta access token.
+- `WHATSAPP_ACCESS_TOKEN`: Meta API access token.
 - `WHATSAPP_PHONE_NUMBER_ID`: numeric sender Phone Number ID.
-- `WHATSAPP_RECIPIENT`: recipient number in international format, e.g. `+54911...`.
+- `WHATSAPP_RECIPIENT`: recipient in international format, e.g. `+54911...`.
 - `WHATSAPP_TEMPLATE_NAME`: approved template name.
-- `WHATSAPP_TEMPLATE_LANGUAGE`: approved template language, default `es_AR`.
-- `WHATSAPP_API_VERSION`: Graph API version, default `v26.0`.
+- `WHATSAPP_TEMPLATE_LANGUAGE`: approved language; defaults to `es_AR`.
+- `WHATSAPP_API_VERSION`: Graph API version; defaults to `v26.0`.
 
-Do not paste any of these secrets into this chat or commit them to GitHub.
+Messages initiated by the business and those outside the customer service window must follow Meta's current template and consent rules. See the [official WhatsApp Cloud API docs](https://developers.facebook.com/docs/whatsapp/cloud-api).
 
-## Deploy the service
+## 2. OpenAI vision access
 
-A Render Blueprint is included in the repository as `render.yaml`. Use the Render Dashboard to create a Blueprint/Web Service from this repository and enter every `sync: false` variable securely when prompted. Once deployment finishes, check `https://YOUR-SERVICE.onrender.com/health`; it should return JSON with `status: ok`. That health check never sends a WhatsApp message.
+Create an API key in the OpenAI API platform and configure it as a secret:
 
-The included free Render configuration is intended for an initial experiment only. Render's free web services spin down after 15 minutes idle and wake on a request; their local files are ephemeral, so the duplicate-ID journal may be lost on restarts/sleep/redeploy. See [Render's free-service limitations](https://render.com/docs/free). Do not count on exactly-once delivery using only ephemeral local storage. For reliable ongoing use, deploy on an always-on service with durable storage or add a persistent database first.
+- `OPENAI_API_KEY`: private API key.
+- `OPENAI_VISION_MODEL`: defaults to `gpt-6.1-terra`, a model with image-input support. You can choose another enabled vision-capable model after checking the model catalogue.
 
-## Configure the Custom GPT Action
+This key is separate from ChatGPT Free/Plus/Pro access. API charges apply per use and are not included in the ChatGPT subscription. Begin with a few test screenshots and review the usage/budget settings before using it regularly.
 
-1. In a Custom GPT that supports Actions, open its editor and choose **Actions -> Create new action**.
-2. Copy the OpenAPI schema from `openapi/chatgpt-image-whatsapp.yaml`.
-3. Replace the placeholder under `servers[0].url` with the deployed HTTPS service URL, for example `https://YOUR-SERVICE.onrender.com`.
-4. Set action authentication to **API Key -> Bearer** and enter the exact value of `BPR02_IMAGE_ALERT_ACTION_TOKEN`.
-5. Test the action in the editor with a synthetic request. Do not use a real WhatsApp recipient for initial tests until the account/template is ready.
+## 3. Deploy the web service
 
-### Custom GPT instructions
+The repository includes a Render Blueprint in `render.yaml`.
 
-Add the following instruction to the Custom GPT. Keep it alongside the user's usual chart-analysis instructions:
+1. Open Render and create a new Blueprint from the repository `d5053758-droid/BPR-02.`.
+2. In the setup/deployment form, enter these secrets:
+   - `BPR02_IMAGE_ALERT_ACTION_TOKEN`: generate a long random private value. This is the password required to use the upload page.
+   - `OPENAI_API_KEY`
+   - `WHATSAPP_ACCESS_TOKEN`
+   - `WHATSAPP_PHONE_NUMBER_ID`
+   - `WHATSAPP_RECIPIENT`
+   - `WHATSAPP_TEMPLATE_NAME`
+3. Confirm the default values `OPENAI_VISION_MODEL=gpt-6.1-terra`, `WHATSAPP_TEMPLATE_LANGUAGE=es_AR`, and `WHATSAPP_API_VERSION=v26.0` match your actual account and approved template.
+4. Deploy the service. Check `https://YOUR-SERVICE.onrender.com/health`; it should return `status: ok`. This health check does not send a WhatsApp message.
 
-> IMAGE-ONLY WHATSAPP RULE: Never call `sendImageAnalysisToWhatsApp` unless the current user message contains a visible trading-chart screenshot and you have actually inspected that screenshot. Do not call it for text-only turns, a screenshot discussed in an earlier turn, general questions, or live market events. After analyzing the image, always return your analysis in ChatGPT as usual and call the action once with the concise result for that image. Use signal CALL, PUT, or NO TRADE. If evidence or chart labels are unclear, use NO TRADE and say why; do not invent prices, levels, confirmations, or expiries. Set `image_attached` to true only in that screenshot turn and set `analysis_source` to `chatgpt_image_analysis`. Generate a new `analysis_id` for each uploaded screenshot and reuse the same ID only if retrying that same notification. Do not send a message for any turn without a chart image. Do not imply that an order was placed.
+The blueprint currently targets a free Render service for a proof of concept. Free instances may sleep after inactivity, and their local file system is ephemeral. For dependable repeated use and robust duplicate suppression, move to an always-on service with durable storage before relying on it.
 
-### Payload sent by the action
+## 4. Use it from your phone
 
-The action does not upload chart pixels. It passes the result of the image analysis, e.g.:
+1. Open `https://YOUR-SERVICE.onrender.com/`.
+2. Enter the private `BPR02_IMAGE_ALERT_ACTION_TOKEN` you configured for the service.
+3. Select a current screenshot of the chart (PNG, JPG or WEBP; maximum 4 MB).
+4. Check the preview, then tap **Analizar captura y enviar WhatsApp**.
+5. Wait for the result. The page displays the analysis and whether Meta accepted the WhatsApp request.
 
-```json
-{
-  "analysis_id": "2ac537a3-2957-47bd-9e19-bpr02-example-001",
-  "image_attached": true,
-  "analysis_source": "chatgpt_image_analysis",
-  "symbol": "EURUSD_otc",
-  "timeframe": "M1",
-  "signal": "NO TRADE",
-  "reason": "La captura no muestra una confirmación suficiente.",
-  "entry_trigger": "Esperar el cierre de vela y una recuperación confirmada.",
-  "expiry": "No aplicable sin confirmación.",
-  "confirmation": "Cierre y retesteo visibles.",
-  "invalidation": "La estructura visible deja de ser válida."
-}
-```
+If you do not choose a screenshot, the action remains disabled. If the image is rejected, the vision call fails, or the analysis is invalid, the service does not send a WhatsApp message. If the API succeeds but WhatsApp rejects the message, the page reports the failure instead of claiming delivery. Meta acceptance alone does not prove that the message reached or was read on the handset.
 
-The timestamp on the WhatsApp message is generated by the service when the action request is received; the model should not fabricate a timestamp. The endpoint validates the payload and auth token, limits request size, avoids request-body/token logs, and never passes requests to any trading platform.
+The page sends the image directly to this service over HTTPS; it does not upload it to GitHub. The service forwards the image to OpenAI for analysis and uses the result to compose the WhatsApp message. Avoid uploading screenshots that expose passwords, account identifiers, or other private information.
 
-## Test and run locally
+## 5. Testing and limits
 
-Install the project and tests:
+Run the offline tests:
 
 ```bash
 python -m pip install -e ".[test]"
 python -m pytest
 ```
 
-Run the HTTP service only after supplying all required environment variables:
+The tests mock both vision and message sending, so they do not call OpenAI or Meta and do not send real WhatsApp messages. Once deployed, first use a test recipient and a template that is actually approved in your Meta account.
 
-```bash
-python -m bpr02.image_alert_api
-```
-
-It listens on the port configured by `PORT` (default `8080`). In hosted use, the service must be behind HTTPS. Unit tests use a local loopback server and a fake notifier; they do not call Meta or send real WhatsApp messages.
-
-## Security and limitations
-
-- The endpoint cannot independently prove that ChatGPT saw an image. That rule depends on the configured GPT instructions; a holder of the bearer token can call the endpoint directly.
-- Anyone who has access to the Action configuration and its token can potentially send messages. Rotate the token if it is exposed.
-- `accepted_by_meta` means Meta accepted the message API request, not that a WhatsApp recipient received or read it.
-- The WhatsApp account must be properly configured, the recipient must have opted in, and the template/language must match Meta's configuration.
-- This is a report of visual chart interpretation, not a promise of future price movement or a trading order. Screenshots are snapshots and may be stale, cropped, or ambiguous.
+The vision model can misread small text, candles, labels, prices, or chart structure. A screenshot is only a snapshot and does not prove that the same price remains available. Treat the message as a manually reviewed research note, never as a guaranteed prediction or an instruction that an order was placed.

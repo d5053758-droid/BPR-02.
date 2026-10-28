@@ -253,58 +253,15 @@ The offline tests use a mocked SSE stream and synthetic ticks to verify candle a
 
 **Expiry limitation:** the first live monitor intentionally generates M1 candle-close research signals, not three-second settlement signals. The provider's tick timestamps are whole seconds, so this data cannot reconstruct sub-second price ordering, latency, or exact contract settlement. Keep the result in manual research/demo use and verify feed behavior before interpreting signals.
 
-## Optional WhatsApp Cloud API research alerts
+## ChatGPT image -> WhatsApp alerts
 
-BPR-02 can optionally send directional research alerts through Meta's **official WhatsApp Cloud API**. Notifications are disabled by default. Real sending requires the explicit `--whatsapp-send` flag, and only closed-candle events with `signal=CALL` or `signal=PUT` are eligible; `NO TRADE`, data-quality events and status events do not send messages.
+BPR-02 includes a separate authenticated API for the image-driven workflow: upload a chart screenshot to a **configured Custom GPT**, let ChatGPT analyze that image, and then send the resulting message to WhatsApp. This is **not** a continuous market alert service: the live OTCharts monitor no longer sends WhatsApp messages. The image-analysis endpoint requires `image_attached: true`, an authenticated action token and the `chatgpt_image_analysis` source label; it accepts CALL, PUT, or NO TRADE. It never places or manages orders.
 
-### Before enabling it
+The ordinary chat in which this repository is edited does not automatically gain an outbound WhatsApp action. To send messages from ChatGPT, deploy the API endpoint and configure the OpenAPI action in a Custom GPT that supports Actions; then upload screenshots in that GPT. The service receives the analysis result, not raw image pixels, so the Custom GPT's instructions must enforce the rule: never invoke the action unless the current user message includes an image of a trading chart that has actually been inspected.
 
-1. Set up WhatsApp Business Platform / Cloud API in Meta and use a phone number ID with the `whatsapp_business_messaging` permission.
-2. Create and obtain approval for a message template, for example `bpr02_research_alert`, whose body has exactly one text placeholder, `{{1}}`. The configured language must match the approved template (default: `es_AR`).
-3. Confirm the recipient has agreed to receive these alerts. WhatsApp policy requires approved templates to initiate conversations and outside the 24-hour customer-service window. Message fees or other account limits may apply.
-4. Store the access token and the phone number ID, recipient and template settings as environment variables or Codespaces secrets. Never commit these values to the repository or paste the access token into chat.
+Start with the detailed guide: [docs/CHATGPT_IMAGE_TO_WHATSAPP.md](docs/CHATGPT_IMAGE_TO_WHATSAPP.md). It covers Render deployment, secret configuration, the OpenAPI schema at [openapi/chatgpt-image-whatsapp.yaml](openapi/chatgpt-image-whatsapp.yaml), Custom GPT instructions, WhatsApp templates and limitations. The included `render.yaml` is intended for an initial experiment only; Render free instances can sleep and lose local files, so reliable message delivery and duplicate suppression require an always-on host and durable storage.
 
-The current Graph API version defaults to `v26.0` and can be changed with `WHATSAPP_API_VERSION`. See Meta's [Graph API version changelog](https://developers.facebook.com/docs/graph-api/changelog/).
-
-### Required configuration
-
-Set these environment variables in the environment where BPR-02 runs:
-
-- `WHATSAPP_ACCESS_TOKEN`: Meta access token; keep it secret.
-- `WHATSAPP_PHONE_NUMBER_ID`: numeric ID of the sending business phone number (not the displayed phone number).
-- `WHATSAPP_RECIPIENT`: recipient in international format, e.g. `+54911...`.
-- `WHATSAPP_TEMPLATE_NAME`: name of the approved template (e.g. `bpr02_research_alert`).
-- `WHATSAPP_TEMPLATE_LANGUAGE`: template language code, default `es_AR`.
-- `WHATSAPP_API_VERSION`: Graph API version, default `v26.0`.
-
-
-### Run a five-minute research capture with WhatsApp alerts
-
-Make sure the OTCharts streaming entitlement and `OTCHARTS_API_KEY` are already configured. If running from a terminal, the access tokens can be entered without echoing them:
-
-```bash
-read -r -s -p "OTCharts API key: " OTCHARTS_API_KEY
-printf '\n'
-export OTCHARTS_API_KEY
-read -r -s -p "Meta WhatsApp access token: " WHATSAPP_ACCESS_TOKEN
-printf '\n'
-export WHATSAPP_ACCESS_TOKEN
-
-bpr02-live-signals \
-  --symbol EURUSD_otc \
-  --lookback 12 \
-  --duration-seconds 300 \
-  --output bpr02_live_signals.jsonl \
-  --whatsapp-send
-
-unset OTCHARTS_API_KEY WHATSAPP_ACCESS_TOKEN
-```
-
-The phone number ID, recipient, template name and language must also be configured in the environment before running the command. Prefer Codespaces secrets for repeatable setup; do not type credentials as command-line arguments. Without `--whatsapp-send`, the monitor will not send WhatsApp messages even if credentials exist.
-
-Each notification passes one compact, cautious research summary into template variable `{{1}}`, e.g. `BPR-02 | CALL | EURUSD_otc | M1 | Vela cerrada: ... | Candidato experimental; verificar el gráfico. Sin ejecución automática.` Successful API acknowledgements are recorded as `whatsapp_notification` events in the JSONL output. The separate `bpr02_whatsapp_sent.jsonl` state file stores only the event ID and Meta's message ID so duplicate event IDs are skipped after restarts. A status of `accepted_by_meta` means Meta accepted the request; it does not independently prove final delivery.
-
-The sender uses an HTTPS POST to the official Meta Graph API, does not log tokens or message bodies in its de-duplication file, and uses mocked transport in unit tests. The software tests do not send real WhatsApp messages. No WhatsApp credentials or live API access have been configured by this repository change, so the live delivery path still needs your authorized Meta account setup and a real, intentional run. This module does not log into Pocket Option or place, modify or close trades.
+The tests use mocked/local requests. They do not call Meta or send real WhatsApp messages, and the service is not considered live until it has been deployed, the approved WhatsApp template is configured, the Custom GPT action is set up, and a test delivery has been confirmed.
 
 ## Research backtests for expiry measured in seconds
 

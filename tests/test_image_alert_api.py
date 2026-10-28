@@ -38,7 +38,7 @@ def result(**changes):
 
 def payload(**changes):
     data = {
-        "analysis_id": "2ac537a3-2957-47bd-9e19-bpr02-test-001",
+        "analysis_id": "2ac537a3-2957-47bd-9e19-7b02c0f40001",
         "image_attached": True, "image_data_url": IMAGE_URL,
     }
     data.update(changes)

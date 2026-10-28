@@ -80,7 +80,7 @@ def test_sends_only_an_approved_template_to_official_graph_endpoint_and_keeps_se
     assert payload["template"]["language"] == {"code": "es_AR"}
     text = payload["template"]["components"][0]["parameters"][0]["text"]
     assert text == format_research_alert(event())
-    assert "CALL" in text and "Sin ejecución automática" in text
+    assert "CALL" in text and "no se ejecutó ninguna operación" in text
     assert result == {
         "status": "accepted_by_meta",
         "event_id": "event-001",

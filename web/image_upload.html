@@ -175,11 +175,13 @@
         result.appendChild(p);
       });
       result.hidden = false;
-      setStatus(body.whatsapp_status === "accepted_by_meta"
-        ? "Análisis realizado y solicitud de WhatsApp aceptada por Meta."
-        : body.whatsapp_status === "duplicate_skipped"
-          ? "Este análisis ya se había enviado; se evitó duplicar el mensaje."
-          : "Análisis realizado. Estado del envío: " + (body.whatsapp_status || "desconocido"), "ok");
+      setStatus(body.status === "image_not_recognized"
+        ? "No se envió WhatsApp porque la imagen no parece ser un gráfico de mercado."
+        : body.whatsapp_status === "accepted_by_meta"
+          ? "Análisis realizado y solicitud de WhatsApp aceptada por Meta."
+          : body.whatsapp_status === "duplicate_skipped"
+            ? "Este análisis ya se había enviado; se evitó duplicar el mensaje."
+            : "Análisis realizado. Estado del envío: " + (body.whatsapp_status || "desconocido"), "ok");
       // Keep the analysis ID so manual retries of this same submission do not create another event.
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Ocurrió un error inesperado.", "error");

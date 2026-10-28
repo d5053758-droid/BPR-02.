@@ -1,0 +1,120 @@
+openapi: 3.1.0
+info:
+  title: BPR-02 ChatGPT image-analysis to WhatsApp action
+  version: 1.0.0
+  description: >
+    Sends a WhatsApp research note only after the configured ChatGPT assistant
+    has analyzed a chart image and explicitly reports that an image was attached.
+    The service does not receive or inspect image pixels and never executes trades.
+servers:
+  - url: https://REPLACE-WITH-YOUR-DEPLOYED-SERVICE-HOST
+paths:
+  /v1/image-analysis:
+    post:
+      operationId: sendImageAnalysisToWhatsApp
+      summary: Send the result of a chart image analysis to WhatsApp
+      description: >
+        Invoke this action only when a chart image is attached to the current
+        user message and has actually been inspected. Do not call it for text-only
+        messages, live market events, prior-turn images, or general discussion.
+        Send a message for CALL, PUT, or NO TRADE. The endpoint validates the
+        image_attached assertion and sends a message; it cannot independently
+        verify the image attachment because the image is inspected in ChatGPT.
+      security:
+        - bearerActionToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - analysis_id
+                - image_attached
+                - analysis_source
+                - symbol
+                - timeframe
+                - signal
+                - reason
+              properties:
+                analysis_id:
+                  type: string
+                  minLength: 8
+                  maxLength: 128
+                  description: Unique ID for this image analysis; reuse it on retries.
+                image_attached:
+                  type: boolean
+                  enum: [true]
+                  description: Must be true only if the current user message included a chart image.
+                analysis_source:
+                  type: string
+                  enum: [chatgpt_image_analysis]
+                symbol:
+                  type: string
+                  minLength: 1
+                  maxLength: 220
+                timeframe:
+                  type: string
+                  minLength: 1
+                  maxLength: 220
+                signal:
+                  type: string
+                  enum: [CALL, PUT, NO TRADE]
+                reason:
+                  type: string
+                  minLength: 1
+                  maxLength: 220
+                  description: Concise reason grounded in the visible chart.
+                entry_trigger:
+                  type: string
+                  maxLength: 350
+                  description: Entry condition or why no entry is justified.
+                expiry:
+                  type: string
+                  maxLength: 350
+                  description: Only state an expiry when the image/context supports an estimate; otherwise say not applicable.
+                confirmation:
+                  type: string
+                  maxLength: 350
+                invalidation:
+                  type: string
+                  maxLength: 350
+      responses:
+        "200":
+          description: Meta accepted the message request, or a duplicate was skipped.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [accepted_by_meta, duplicate_skipped, skipped]
+                  analysis_id:
+                    type: string
+                  signal:
+                    type: string
+                  orders_submitted:
+                    type: integer
+                    const: 0
+        "400":
+          description: Invalid payload or no asserted chart image.
+        "401":
+          description: Invalid action token.
+        "502":
+          description: WhatsApp Cloud API did not accept the message.
+  /health:
+    get:
+      operationId: imageAlertHealth
+      summary: Check whether the image-alert service is running
+      security: []
+      responses:
+        "200":
+          description: Service is running; no WhatsApp message is sent.
+components:
+  securitySchemes:
+    bearerActionToken:
+      type: http
+      scheme: bearer
+      bearerFormat: secret action token

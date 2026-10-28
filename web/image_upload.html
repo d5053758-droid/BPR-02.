@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#111827">
+  <title>BPR-02 · Captura a WhatsApp</title>
+  <style>
+    :root { color-scheme: light dark; font-family: system-ui, -apple-system, Segoe UI, sans-serif; }
+    body { margin: 0; background: #f3f4f6; color: #111827; }
+    main { max-width: 680px; margin: 0 auto; padding: 22px 16px 40px; }
+    .panel { background: white; border: 1px solid #e5e7eb; border-radius: 18px; padding: 20px; box-shadow: 0 8px 32px rgba(17,24,39,.06); }
+    h1 { font-size: 1.45rem; margin: 0 0 6px; }
+    p { line-height: 1.5; }
+    .muted { color: #4b5563; font-size: .94rem; }
+    label { display: block; font-weight: 650; margin: 17px 0 7px; }
+    input[type=password], input[type=file] { display: block; box-sizing: border-box; width: 100%; padding: 12px; border: 1px solid #9ca3af; border-radius: 10px; background: white; color: #111827; }
+    button { width: 100%; margin-top: 18px; border: 0; border-radius: 11px; padding: 14px 16px; color: white; background: #1f2937; font-weight: 700; font-size: 1rem; }
+    button:disabled { opacity: .55; }
+    img { display: block; width: 100%; max-height: 430px; object-fit: contain; margin-top: 12px; background: #e5e7eb; border-radius: 10px; }
+    #status { margin-top: 18px; padding: 12px; border-radius: 10px; display: none; white-space: pre-wrap; overflow-wrap: anywhere; }
+    #status.ok { display: block; background: #ecfdf5; color: #065f46; }
+    #status.error { display: block; background: #fef2f2; color: #991b1b; }
+    .notice { margin-top: 15px; padding: 12px; border-left: 3px solid #9ca3af; background: #f9fafb; font-size: .88rem; color: #374151; }
+    .result { border-top: 1px solid #e5e7eb; margin-top: 16px; padding-top: 12px; }
+    .result strong { display: inline-block; min-width: 120px; }
+    @media (prefers-color-scheme: dark) {
+      body { background:#111827; color:#f9fafb; }
+      .panel { background:#1f2937; border-color:#374151; }
+      .muted { color:#d1d5db; }
+      input[type=password], input[type=file] { background:#111827; color:#f9fafb; border-color:#6b7280; }
+      .notice { background:#111827; color:#d1d5db; border-color:#6b7280; }
+      .result { border-color:#4b5563; }
+      img { background:#374151; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <section class="panel">
+    <h1>BPR-02 · Captura a WhatsApp</h1>
+    <p class="muted">Subí una captura de tu gráfico. Se analizará esa imagen y se enviará el resultado a tu WhatsApp configurado, incluso si la conclusión es NO TRADE.</p>
+    <label for="accessToken">Clave privada de acceso</label>
+    <input id="accessToken" type="password" autocomplete="current-password" placeholder="Pegá aquí la clave de acceso de la página" required>
+    <label for="chartImage">Captura del gráfico (PNG, JPG o WEBP)</label>
+    <input id="chartImage" type="file" accept="image/png,image/jpeg,image/webp" required>
+    <img id="preview" alt="Vista previa de la captura elegida" hidden>
+    <p id="fileInfo" class="muted">No se envía nada hasta que elijas una imagen y pulses el botón.</p>
+    <button id="submit" type="button" disabled>Analizar captura y enviar WhatsApp</button>
+    <div id="status" role="status" aria-live="polite"></div>
+    <div id="result" class="result" hidden></div>
+    <div class="notice"><strong>Importante:</strong> cada envío consume una llamada a la API de visión y puede tener costo. Este servicio solo comparte el análisis de la captura; no abre ni ejecuta operaciones. Si la imagen no muestra suficiente información, la conclusión será NO TRADE. No uses una captura vieja como si fuera el mercado actual.</div>
+  </section>
+</main>
+<script>
+(() => {
+  const tokenInput = document.getElementById("accessToken");
+  const imageInput = document.getElementById("chartImage");
+  const preview = document.getElementById("preview");
+  const fileInfo = document.getElementById("fileInfo");
+  const button = document.getElementById("submit");
+  const status = document.getElementById("status");
+  const result = document.getElementById("result");
+  let selectedFile = null;
+  let currentAnalysisId = null;
+  let previewUrl = null;
+
+  function setStatus(message, type) {
+    status.textContent = message;
+    status.className = type;
+  }
+
+  function newId() {
+    if (window.crypto && typeof window.crypto.randomUUID === "function") return window.crypto.randomUUID();
+    return "bpr02-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);
+  }
+
+  imageInput.addEventListener("change", () => {
+    selectedFile = imageInput.files && imageInput.files[0] ? imageInput.files[0] : null;
+    currentAnalysisId = null;
+    result.hidden = true;
+    status.className = "";
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    previewUrl = null;
+    if (!selectedFile) {
+      preview.hidden = true;
+      fileInfo.textContent = "No se envía nada hasta que elijas una imagen y pulses el botón.";
+      button.disabled = true;
+      return;
+    }
+    const allowed = ["image/png", "image/jpeg", "image/webp"];
+    if (!allowed.includes(selectedFile.type)) {
+      selectedFile = null;
+      imageInput.value = "";
+      preview.hidden = true;
+      fileInfo.textContent = "Formato no compatible. Elegí PNG, JPG o WEBP.";
+      button.disabled = true;
+      return;
+    }
+    if (selectedFile.size > 4 * 1024 * 1024) {
+      selectedFile = null;
+      imageInput.value = "";
+      preview.hidden = true;
+      fileInfo.textContent = "La imagen supera 4 MB. Recortá o comprimí la captura e intentá nuevamente.";
+      button.disabled = true;
+      return;
+    }
+    previewUrl = URL.createObjectURL(selectedFile);
+    preview.src = previewUrl;
+    preview.hidden = false;
+    fileInfo.textContent = selectedFile.name + " · " + (selectedFile.size / 1024).toFixed(0) + " KB";
+    button.disabled = false;
+  });
+
+  button.addEventListener("click", async () => {
+    if (!selectedFile) {
+      setStatus("Elegí una imagen antes de enviar.", "error");
+      return;
+    }
+    const secret = tokenInput.value.trim();
+    if (!secret) {
+      setStatus("Ingresá la clave privada de acceso.", "error");
+      return;
+    }
+    const mime = selectedFile.type;
+    const reader = new FileReader();
+    button.disabled = true;
+    setStatus("Analizando la captura. No cierres esta página...", "ok");
+    result.hidden = true;
+    try {
+      const dataUrl = await new Promise((resolve, reject) => {
+        reader.onerror = () => reject(new Error("No pude leer la imagen seleccionada."));
+        reader.onload = () => resolve(reader.result);
+        reader.readAsDataURL(selectedFile);
+      });
+      if (typeof dataUrl !== "string" || !dataUrl.startsWith("data:" + mime + ";base64,")) {
+        throw new Error("No pude procesar el archivo como imagen.");
+      }
+      if (!currentAnalysisId) currentAnalysisId = newId();
+      const response = await fetch("/v1/analyze-image", {
+        method: "POST",
+        headers: {
+          "Authorization": "Bearer " + secret,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          analysis_id: currentAnalysisId,
+          image_data_url: dataUrl,
+          image_attached: true
+        })
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || "El servicio rechazó el envío (" + response.status + ").");
+      const fields = [
+        ["Conclusión", body.signal],
+        ["Activo", body.symbol],
+        ["Temporalidad", body.timeframe],
+        ["Motivo", body.reason],
+        ["Gatillo", body.entry_trigger],
+        ["Expiración", body.expiry],
+        ["Confirmación", body.confirmation],
+        ["Invalidación", body.invalidation],
+        ["WhatsApp", body.whatsapp_status]
+      ];
+      result.replaceChildren();
+      fields.forEach(([label, value]) => {
+        if (!value) return;
+        const p = document.createElement("p");
+        const strong = document.createElement("strong");
+        strong.textContent = label + ": ";
+        p.append(strong, document.createTextNode(String(value)));
+        result.appendChild(p);
+      });
+      result.hidden = false;
+      setStatus(body.whatsapp_status === "accepted_by_meta"
+        ? "Análisis realizado y solicitud de WhatsApp aceptada por Meta."
+        : body.whatsapp_status === "duplicate_skipped"
+          ? "Este análisis ya se había enviado; se evitó duplicar el mensaje."
+          : "Análisis realizado. Estado del envío: " + (body.whatsapp_status || "desconocido"), "ok");
+      // Keep the analysis ID so manual retries of this same submission do not create another event.
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Ocurrió un error inesperado.", "error");
+    } finally {
+      button.disabled = false;
+    }
+  });
+})();
+</script>
+</body>
+</html>

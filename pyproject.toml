@@ -27,6 +27,9 @@ bpr02-api = "bpr02.api:main"
 bpr02-live-signals = "bpr02.live_signals:main"
 bpr02-image-alert-api = "bpr02.image_alert_api:main"
 
+[tool.setuptools.packages.find]
+include = ["bpr02*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"

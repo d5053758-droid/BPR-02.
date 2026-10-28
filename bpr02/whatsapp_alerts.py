@@ -172,9 +172,9 @@ class WhatsAppTemplateNotifier:
 
     def send_event(self, event: dict[str, object]) -> dict[str, object]:
         """Send a CALL/PUT alert once per event ID; no message is sent on duplicate."""
-        signal = str(event.get("signal", "")).upper()
-        if signal not in {"CALL", "PUT"}:
-            return {"status": "skipped", "reason": "not_directional_signal", "orders_submitted": 0}
+        signal = str(event.get("signal", "")).strip().upper()
+        if signal not in {"CALL", "PUT", "NO TRADE"}:
+            return {"status": "skipped", "reason": "invalid_signal", "orders_submitted": 0}
 
         event_id = _event_identity(event)
         if event_id in self._sent_ids:

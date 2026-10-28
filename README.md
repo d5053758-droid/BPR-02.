@@ -253,16 +253,6 @@ The offline tests use a mocked SSE stream and synthetic ticks to verify candle a
 
 **Expiry limitation:** the first live monitor intentionally generates M1 candle-close research signals, not three-second settlement signals. The provider's tick timestamps are whole seconds, so this data cannot reconstruct sub-second price ordering, latency, or exact contract settlement. Keep the result in manual research/demo use and verify feed behavior before interpreting signals.
 
-## Mobile chart screenshot -> WhatsApp alerts
-
-BPR-02 now includes a **separate mobile-friendly upload page** for the workflow where you choose a screenshot, the service analyzes the actual image with OpenAI's vision-capable Responses API, and only after that analysis succeeds does it send a WhatsApp template message. This is not a continuous market alert service; the OTCharts monitor does not send WhatsApp messages. The endpoint requires actual base64 image bytes (PNG, JPEG or WEBP, up to 4 MB), validates them, and accepts only CALL, PUT, or NO TRADE analysis results. Without an image, it will not analyze or send a message.
-
-This separate page is a practical workaround for an ordinary ChatGPT conversation that cannot call an arbitrary outbound webhook automatically when a picture is uploaded. It means the screenshot must be uploaded to the BPR-02 page rather than this chat. The page uses an `OPENAI_API_KEY` and OpenAI API billing, which are separate from ChatGPT subscription usage. Visual models can misread chart details, so inconclusive images should result in NO TRADE.
-
-Start with [docs/CHATGPT_IMAGE_TO_WHATSAPP.md](docs/CHATGPT_IMAGE_TO_WHATSAPP.md). The guide covers the mobile page, OpenAI and Meta secrets, Render deployment, the approved WhatsApp template, and testing. `render.yaml` is a proof-of-concept blueprint. Free hosting can sleep or lose local state, so reliable repeated use requires an always-on host and durable storage.
-
-The tests mock both vision and WhatsApp transport. They do not call OpenAI or Meta and do not send real messages. The workflow is not live until the service is deployed, the OpenAI API key and approved WhatsApp template are configured, and a test delivery has been confirmed.
-
 ## Research backtests for expiry measured in seconds
 
 The fixed-expiry bar backtester settles at candle closes. For a three-second hypothesis based on M1 signals, use the separate `bpr02-seconds-backtest` command with two files:
@@ -394,17 +384,12 @@ Choose `review` to mark an alert for manual inspection or `ignore` to dismiss it
 - `bpr02/evaluation.py`: chronological train/test and expanding walk-forward splits.
 - `bpr02/walkforward.py`: per-fold fixed-expiry simulations and fold metrics.
 - `bpr02/signal_bridge.py`: closed-candle JSONL alert bridge and append-only event log.
-- `bpr02/image_alert_api.py`: authenticated API called by a configured ChatGPT Action after a chart-image analysis; it never analyzes market data or executes orders.
-- `bpr02/whatsapp_alerts.py`: official WhatsApp Cloud API template sender with local event-ID de-duplication.
 - `bpr02/execution.py`: fail-closed interface for a possible future authorized adapter; no live adapter or order submission is implemented.
 - `bpr02/review.py`: append-only manual signal review journal.
 - `bpr02/replay.py`: deterministic historical CSV-to-JSONL test adapter (not live).
 - `bpr02/smoke_test.py`: runnable synthetic end-to-end software check, exposed as `bpr02-smoke`.
 - `docs/FEED_ADAPTER_CONTRACT.md`: data-provider interface contract and connection requirements.
 - `docs/FUTURE_EXECUTION_BOUNDARY.md`: prerequisites, approval boundary and safeguards for any future execution adapter.
-- `docs/CHATGPT_IMAGE_TO_WHATSAPP.md`: setup guide for the image-only ChatGPT-to-WhatsApp workflow.
-- `openapi/chatgpt-image-whatsapp.yaml`: OpenAPI schema to configure the Custom GPT Action.
-- `tests/test_image_alert_api.py` and `tests/test_whatsapp_alerts.py`: offline tests with fake message transport; no real WhatsApp messages are sent.
 - `bpr02/sensitivity.py`: chronological train/test sensitivity grid for lookback and expiry.
 - `bpr02/audit.py`: timestamp-interval, gap and OHLC diagnostics.
 - `bpr02/cli.py`: command-line interface.

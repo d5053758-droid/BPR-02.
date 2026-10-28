@@ -25,6 +25,7 @@ class FakeNotifier:
 
 def result(**changes):
     payload = {
+        "is_chart": True,
         "symbol": "EURUSD_otc", "timeframe": "M1", "signal": "NO TRADE",
         "reason": "La captura no muestra una confirmación suficiente.",
         "entry_trigger": "Esperar cierre y recuperación.",
@@ -97,6 +98,19 @@ def test_no_image_means_no_analysis_and_no_whatsapp():
         assert err.value.code == 400
         assert json.loads(err.value.read())["error"] == "an_actual_image_is_required"
         assert calls == [] and notifier.events == []
+    finally:
+        stop(server, thread)
+
+
+def test_non_chart_image_does_not_send_whatsapp():
+    notifier = FakeNotifier()
+    server, thread, base = start_server(notifier, analyzer=lambda image: result(is_chart=False, reason="No parece un gráfico."))
+    try:
+        with post(base, payload()) as response:
+            body = json.loads(response.read())
+        assert body["status"] == "image_not_recognized"
+        assert body["whatsapp_status"] == "not_sent_no_chart_detected"
+        assert notifier.events == []
     finally:
         stop(server, thread)
 
@@ -194,6 +208,7 @@ def test_responses_api_receives_image_as_data_url_and_returns_json_analysis():
                    if p.get("type") == "input_image"]
     assert image_parts[0]["image_url"] == IMAGE_URL
     assert analyzed["signal"] == "NO TRADE"
+    assert analyzed["is_chart"] is True
 
 
 def test_invalid_image_never_calls_openai():

@@ -312,6 +312,23 @@ def make_handler(
                 self._send_json(HTTPStatus.BAD_GATEWAY, {"error": "image_analysis_failed_no_whatsapp_sent"})
                 return
 
+            # Fail closed even if a model/client adapter returns malformed fields.
+            if not isinstance(analysis, dict):
+                self._send_json(HTTPStatus.BAD_GATEWAY, {"error": "invalid_image_analysis_no_whatsapp_sent"})
+                return
+            normalized: dict[str, str] = {}
+            for field in _ANALYSIS_FIELDS:
+                value = analysis.get(field, "")
+                if not isinstance(value, str) or (field in {"symbol", "timeframe", "signal", "reason"} and not value.strip()):
+                    self._send_json(HTTPStatus.BAD_GATEWAY, {"error": "invalid_image_analysis_no_whatsapp_sent"})
+                    return
+                normalized[field] = value.strip()[:350]
+            normalized["signal"] = normalized["signal"].upper()
+            if normalized["signal"] not in ALLOWED_SIGNALS:
+                self._send_json(HTTPStatus.BAD_GATEWAY, {"error": "invalid_image_analysis_no_whatsapp_sent"})
+                return
+            analysis = normalized
+
             # Message event ID is tied to the client submission ID. A retry after a
             # successful send is deduplicated using Meta's accepted-message journal.
             image_fingerprint = hashlib.sha256(image_bytes).hexdigest()[:16]

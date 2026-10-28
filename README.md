@@ -394,12 +394,17 @@ Choose `review` to mark an alert for manual inspection or `ignore` to dismiss it
 - `bpr02/evaluation.py`: chronological train/test and expanding walk-forward splits.
 - `bpr02/walkforward.py`: per-fold fixed-expiry simulations and fold metrics.
 - `bpr02/signal_bridge.py`: closed-candle JSONL alert bridge and append-only event log.
+- `bpr02/image_alert_api.py`: authenticated API called by a configured ChatGPT Action after a chart-image analysis; it never analyzes market data or executes orders.
+- `bpr02/whatsapp_alerts.py`: official WhatsApp Cloud API template sender with local event-ID de-duplication.
 - `bpr02/execution.py`: fail-closed interface for a possible future authorized adapter; no live adapter or order submission is implemented.
 - `bpr02/review.py`: append-only manual signal review journal.
 - `bpr02/replay.py`: deterministic historical CSV-to-JSONL test adapter (not live).
 - `bpr02/smoke_test.py`: runnable synthetic end-to-end software check, exposed as `bpr02-smoke`.
 - `docs/FEED_ADAPTER_CONTRACT.md`: data-provider interface contract and connection requirements.
 - `docs/FUTURE_EXECUTION_BOUNDARY.md`: prerequisites, approval boundary and safeguards for any future execution adapter.
+- `docs/CHATGPT_IMAGE_TO_WHATSAPP.md`: setup guide for the image-only ChatGPT-to-WhatsApp workflow.
+- `openapi/chatgpt-image-whatsapp.yaml`: OpenAPI schema to configure the Custom GPT Action.
+- `tests/test_image_alert_api.py` and `tests/test_whatsapp_alerts.py`: offline tests with fake message transport; no real WhatsApp messages are sent.
 - `bpr02/sensitivity.py`: chronological train/test sensitivity grid for lookback and expiry.
 - `bpr02/audit.py`: timestamp-interval, gap and OHLC diagnostics.
 - `bpr02/cli.py`: command-line interface.

@@ -284,17 +284,17 @@ Make sure the OTCharts streaming entitlement and `OTCHARTS_API_KEY` are already 
 
 ```bash
 read -r -s -p "OTCharts API key: " OTCHARTS_API_KEY
-printf '\\n'
+printf '\n'
 export OTCHARTS_API_KEY
 read -r -s -p "Meta WhatsApp access token: " WHATSAPP_ACCESS_TOKEN
-printf '\\n'
+printf '\n'
 export WHATSAPP_ACCESS_TOKEN
 
-bpr02-live-signals \\
-  --symbol EURUSD_otc \\
-  --lookback 12 \\
-  --duration-seconds 300 \\
-  --output bpr02_live_signals.jsonl \\
+bpr02-live-signals \
+  --symbol EURUSD_otc \
+  --lookback 12 \
+  --duration-seconds 300 \
+  --output bpr02_live_signals.jsonl \
   --whatsapp-send
 
 unset OTCHARTS_API_KEY WHATSAPP_ACCESS_TOKEN

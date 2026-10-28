@@ -16,6 +16,8 @@ No screenshot means no call to this action and therefore no WhatsApp message. Th
 
 **Important boundary:** this does not turn the existing ordinary chat into an outgoing WhatsApp integration. For ChatGPT to call an external API action, configure the OpenAPI schema in a Custom GPT that supports Actions, then upload screenshots in that GPT. The ordinary chat in which these files are being edited does not gain the action automatically. See [OpenAI's GPT Actions overview](https://developers.openai.com/api/docs/actions/introduction) and [configuration guide](https://help.openai.com/en/articles/9442513-configuring-actions-in-gpts).
 
+**Account limitation (checked 28 October 2026):** OpenAI's current Help Center says personal ChatGPT accounts—including Free, Go, Plus and Pro—cannot create or publish new GPTs. If you do not already have an eligible Custom GPT that can be edited, this route cannot be activated from a personal account alone. In that case, a separate mobile-friendly upload app backed by the vision/API service is the practical alternative, but it would not be this same chat. See [OpenAI's current GPT creation availability](https://help.openai.com/en/articles/8554397-creating-and-editing-gpts).
+
 ## Configure WhatsApp Cloud API first
 
 In Meta's WhatsApp Business Platform:

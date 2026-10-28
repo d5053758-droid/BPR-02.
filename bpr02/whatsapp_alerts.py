@@ -28,20 +28,35 @@ class WhatsAppDeliveryError(RuntimeError):
 
 
 def format_research_alert(event: dict[str, object]) -> str:
-    """Format one directional candidate as a cautious, compact WhatsApp alert."""
-    signal = str(event.get("signal", "")).upper()
-    if signal not in {"CALL", "PUT"}:
-        raise ValueError("only CALL or PUT research signals can be sent")
+    """Format a ChatGPT image-analysis result as a compact, cautious WhatsApp alert."""
+    signal = str(event.get("signal", "")).strip().upper()
+    if signal not in {"CALL", "PUT", "NO TRADE"}:
+        raise ValueError("signal must be CALL, PUT, or NO TRADE")
     symbol = str(event.get("symbol", "")).strip()
     timeframe = str(event.get("timeframe", "")).strip()
     timestamp = str(event.get("timestamp", "")).strip()
     if not symbol or not timeframe or not timestamp:
         raise ValueError("alert requires timestamp, symbol, and timeframe")
-    return (
-        f"BPR-02 | {signal} | {symbol} | {timeframe} | "
-        f"Vela cerrada: {timestamp} | Candidato experimental; "
-        "verificar el gráfico. Sin ejecución automática."
+
+    labels = (
+        ("entry_trigger", "Gatillo"),
+        ("expiry", "Expiración"),
+        ("confirmation", "Confirmación"),
+        ("invalidation", "Invalidación"),
+        ("reason", "Motivo"),
     )
+    parts = [
+        f"BPR-02 · Análisis de captura · {signal}",
+        f"Activo: {symbol} · Temporalidad: {timeframe}",
+        f"Hora del análisis: {timestamp}",
+    ]
+    for field, label in labels:
+        value = event.get(field)
+        if isinstance(value, str) and value.strip():
+            parts.append(f"{label}: {value.strip()}")
+    parts.append("Solo análisis visual; no se ejecutó ninguna operación.")
+    # Meta template variables should be kept comfortably below common message limits.
+    return " | ".join(parts)[:950]
 
 
 def _event_identity(event: dict[str, object]) -> str:

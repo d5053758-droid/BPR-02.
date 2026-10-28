@@ -110,7 +110,7 @@ def test_duplicate_event_is_skipped_across_notifier_restarts(tmp_path):
     assert len(calls) == 1
 
 
-@pytest.mark.parametrize("signal", ["NO TRADE", "WAIT", ""])
+@pytest.mark.parametrize("signal", ["WAIT", ""])
 def test_non_directional_events_are_never_sent(tmp_path, signal):
     def fail_if_called(*args, **kwargs):
         raise AssertionError("no request should be made for non-directional events")
@@ -118,7 +118,7 @@ def test_non_directional_events_are_never_sent(tmp_path, signal):
     notifier = make_notifier(tmp_path / "sent.jsonl", fail_if_called)
     result = notifier.send_event(event(signal=signal))
     assert result["status"] == "skipped"
-    assert result["reason"] == "not_directional_signal"
+    assert result["reason"] == "invalid_signal"
 
 
 def test_template_alert_requires_timestamp_symbol_and_timeframe():

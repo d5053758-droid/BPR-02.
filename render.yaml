@@ -9,6 +9,10 @@ services:
     envVars:
       - key: BPR02_IMAGE_ALERT_ACTION_TOKEN
         sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_VISION_MODEL
+        value: gpt-6.1-terra
       - key: WHATSAPP_ACCESS_TOKEN
         sync: false
       - key: WHATSAPP_PHONE_NUMBER_ID

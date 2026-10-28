@@ -226,6 +226,33 @@ bpr02-quote-audit otc_quotes.csv --expiry-seconds 3 --target-resolution-fraction
 
 OTCharts documents whole-second tick timestamps; repeated ticks in the same source second are collapsed to the last tick. Even a stream is therefore not guaranteed to reconstruct subsecond ordering, network latency or the exact broker settlement price. Its data come from a third party, not a supported Pocket Option execution interface.
 
+## Read-only live M1 research signals
+
+BPR-02 now includes a **live research monitor** that listens to OTCharts' server-sent-events stream, aggregates received OTC ticks into M1 candles, and passes only completed candles into the existing sweep-and-reclaim signal bridge. It prints JSON Lines events as they arrive and records them to a separate log. It does not log into a Pocket Option account and does not submit, modify, or close orders.
+
+This uses the **third-party OTCharts market-data API**, not an official Pocket Option trading API. The current OTCharts API reference says the free tier has no live-stream access; a stream-capable plan and a valid OTCharts key are required. Check the current plan and terms on the provider's official [API reference](https://otcharts.com/api) before trying to connect. Do not buy a plan only to test the code.
+
+For the first controlled run, use a 5-minute capture. Enter the key through hidden terminal input so it is not echoed, passed as a shell argument, or committed:
+
+```bash
+read -r -s -p "OTCharts API key: " OTCHARTS_API_KEY
+printf '\\n'
+export OTCHARTS_API_KEY
+bpr02-live-signals \
+  --symbol EURUSD_otc \
+  --lookback 12 \
+  --duration-seconds 300 \
+  --max-tick-age-seconds 10 \
+  --output bpr02_live_signals.jsonl
+unset OTCHARTS_API_KEY
+```
+
+The monitor checks that OTCharts actually subscribed to `EURUSD_otc`, subtracts the documented two-hour OTC clock offset by default, discards ticks older than the configured 10-second limit, and resets its lookback after stale data or a missing minute. It never fills missing prices. A completed candle is recognized only after a tick arrives in the following minute; a partially formed final candle is discarded when the monitor stops. The log contains `research_signal`, `no_trade`, status, and data-quality events. Signal events include `orders_submitted: 0` and are **not order instructions**. A signal may arrive just after the candle boundary because it must wait for confirmation that the previous candle has closed.
+
+The offline tests use a mocked SSE stream and synthetic ticks to verify candle aggregation, a CALL candidate, subscription refusal, stale-data rejection, and gap resets without contacting a data provider. A green test result proves the monitor's software behavior only; it does not prove live connectivity, that OTCharts prices exactly match Pocket Option, or that the strategy is profitable.
+
+**Expiry limitation:** the first live monitor intentionally generates M1 candle-close research signals, not three-second settlement signals. The provider's tick timestamps are whole seconds, so this data cannot reconstruct sub-second price ordering, latency, or exact contract settlement. Keep the result in manual research/demo use and verify feed behavior before interpreting signals.
+
 ## Research backtests for expiry measured in seconds
 
 The fixed-expiry bar backtester settles at candle closes. For a three-second hypothesis based on M1 signals, use the separate `bpr02-seconds-backtest` command with two files:

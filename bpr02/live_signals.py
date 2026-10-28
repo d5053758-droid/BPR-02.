@@ -29,6 +29,7 @@ from .otc_data import (
 )
 from .signal_bridge import SignalBridge
 from .signals import NO_TRADE
+from .whatsapp_alerts import WhatsAppDeliveryError, WhatsAppTemplateNotifier
 
 TIMEFRAME_SECONDS = 60
 TIMEFRAME_LABEL = "M1"
@@ -97,6 +98,7 @@ def monitor_live_signals(
     monotonic_fn: Callable[[], float] | None = None,
     now_epoch_fn: Callable[[], float] | None = None,
     stdout: TextIO | None = None,
+    whatsapp_notifier: WhatsAppTemplateNotifier | None = None,
 ) -> dict[str, object]:
     """Read one authorized OTC SSE stream and emit research-only M1 signals.
 
@@ -185,6 +187,36 @@ def monitor_live_signals(
         output_stream.write(serialized + "\n")
         output_stream.flush()
         counts["events_written"] += 1
+
+        # Notifications are opt-in and limited to directional research candidates.
+        # No-trade, status, or data-quality events never trigger WhatsApp.
+        if (
+            whatsapp_notifier is not None
+            and event.get("event_type") == "research_signal"
+            and event.get("signal") in {"CALL", "PUT"}
+        ):
+            try:
+                result = whatsapp_notifier.send_event(event)
+                notification_event: dict[str, object] = {
+                    "event_type": "whatsapp_notification",
+                    "source_event_id": event.get("event_id"),
+                    "signal": event.get("signal"),
+                    **result,
+                }
+            except Exception as exc:
+                notification_event = {
+                    "event_type": "whatsapp_notification",
+                    "source_event_id": event.get("event_id"),
+                    "signal": event.get("signal"),
+                    "status": "failed",
+                    "error_type": type(exc).__name__,
+                    "reason": (
+                        str(exc) if isinstance(exc, WhatsAppDeliveryError)
+                        else "unexpected notification error; details withheld"
+                    ),
+                    "orders_submitted": 0,
+                }
+            emit(log_file, notification_event)
 
     try:
         response_context = opener(request, timeout=60)
@@ -414,6 +446,7 @@ def monitor_live_signals(
         "partial_candle_discarded_at_stop": partial_candle_discarded,
         "orders_submitted": 0,
         "api_key_written_to_output": False,
+        "whatsapp_notifications_enabled": whatsapp_notifier is not None,
         "warning": (
             "This monitor generates research alerts from closed M1 candles. "
             "It does not connect to a Pocket Option account, establish exact price parity, "
@@ -449,6 +482,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output", default="bpr02_live_signals.jsonl")
     parser.add_argument("--append", action="store_true", help="Append to an existing research-event log")
     parser.add_argument("--api-key-env", default="OTCHARTS_API_KEY")
+    parser.add_argument(
+        "--whatsapp-send",
+        action="store_true",
+        help="explicitly enable real WhatsApp template alerts for CALL/PUT research candidates",
+    )
+    parser.add_argument(
+        "--whatsapp-sent-ids",
+        default=os.environ.get("WHATSAPP_SENT_IDS_PATH", "bpr02_whatsapp_sent.jsonl"),
+        help="append-only local de-duplication record; never contains API tokens or alert text",
+    )
     return parser
 
 
@@ -456,6 +499,10 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         api_key = os.environ.get(args.api_key_env, "")
+        whatsapp_notifier = (
+            WhatsAppTemplateNotifier.from_env(sent_ids_path=args.whatsapp_sent_ids)
+            if args.whatsapp_send else None
+        )
         result = monitor_live_signals(
             api_key=api_key,
             output_path=args.output,
@@ -465,6 +512,7 @@ def main(argv: list[str] | None = None) -> int:
             source_clock_ahead_seconds=args.source_clock_ahead_seconds,
             max_tick_age_seconds=args.max_tick_age_seconds,
             append=args.append,
+            whatsapp_notifier=whatsapp_notifier,
         )
     except (FileExistsError, OSError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

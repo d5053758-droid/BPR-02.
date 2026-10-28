@@ -34,10 +34,12 @@ DEFAULT_VISION_MODEL = "gpt-6.1-terra"
 _SYSTEM_PROMPT = """Eres un analista visual prudente de capturas de gráficos para BPR-02.
 Analiza solamente la imagen adjunta; no tienes precios en vivo ni acceso al broker.
 No prometas resultados ni presentes el análisis como una certeza o una orden.
-Devuelve solo un objeto JSON con estas siete claves string: symbol, timeframe, signal,
-reason, entry_trigger, expiry, confirmation, invalidation. signal debe ser CALL, PUT
-o NO TRADE. Si la imagen no es un gráfico, está borrosa, faltan etiquetas o la
-estructura/confirmación no es evidente, elige NO TRADE y explica la limitación.
+Devuelve solo un objeto JSON con estas claves: is_chart (boolean), symbol, timeframe,
+signal, reason, entry_trigger, expiry, confirmation e invalidation (las otras son strings).
+Si la imagen NO es claramente un gráfico de mercado, is_chart=false. Si sí parece un
+gráfico pero está borroso, faltan etiquetas o la estructura/confirmación no es evidente,
+is_chart=true y signal=NO TRADE, explicando la limitación. Cuando is_chart=false, el
+servicio NO enviará WhatsApp.
 No inventes precio actual, niveles exactos, temporalidad, confirmación ni expiración.
 Usa solo la información legible; si algo no se ve, escribe "No legible en la captura".
 Explica en español, brevemente. entry_trigger debe ser condición a verificar, no orden
@@ -107,7 +109,7 @@ def analyze_image_with_openai(
     api_key: str | None = None,
     model: str | None = None,
     urlopen_fn: Callable[..., object] | None = None,
-) -> dict[str, str]:
+) -> dict[str, object]:
     """Analyze a supplied image via the official Responses API; image data is never logged."""
     secret = (api_key if api_key is not None else os.environ.get("OPENAI_API_KEY", "")).strip()
     if not secret:
@@ -178,7 +180,10 @@ def analyze_image_with_openai(
     if not isinstance(parsed, dict):
         raise RuntimeError("OpenAI vision model output must be a JSON object")
 
-    normalized: dict[str, str] = {}
+    is_chart = parsed.get("is_chart")
+    if not isinstance(is_chart, bool):
+        raise RuntimeError("OpenAI vision model did not return a valid is_chart boolean")
+    normalized: dict[str, object] = {"is_chart": is_chart}
     for field in _ANALYSIS_FIELDS:
         value = parsed.get(field, "")
         if not isinstance(value, str):
@@ -189,7 +194,7 @@ def analyze_image_with_openai(
         if len(value) > 350:
             value = value[:350]
         normalized[field] = value
-    normalized["signal"] = normalized["signal"].upper()
+    normalized["signal"] = str(normalized["signal"]).upper()
     if normalized["signal"] not in ALLOWED_SIGNALS:
         raise RuntimeError("OpenAI vision model returned an unsupported signal")
     return normalized
@@ -199,13 +204,13 @@ def make_handler(
     *,
     action_token: str,
     notifier: WhatsAppTemplateNotifier,
-    vision_analyzer: Callable[[str], dict[str, str]] | None = None,
+    vision_analyzer: Callable[[str], dict[str, object]] | None = None,
 ):
     """Build a handler with injectable dependencies so tests send no real messages."""
     if not action_token or not action_token.strip():
         raise ValueError("BPR02_IMAGE_ALERT_ACTION_TOKEN must be non-empty")
 
-    def analyze(image_data_url: str) -> dict[str, str]:
+    def analyze(image_data_url: str) -> dict[str, object]:
         if vision_analyzer is not None:
             return vision_analyzer(image_data_url)
         return analyze_image_with_openai(image_data_url)
@@ -316,18 +321,32 @@ def make_handler(
             if not isinstance(analysis, dict):
                 self._send_json(HTTPStatus.BAD_GATEWAY, {"error": "invalid_image_analysis_no_whatsapp_sent"})
                 return
-            normalized: dict[str, str] = {}
+            is_chart = analysis.get("is_chart")
+            if not isinstance(is_chart, bool):
+                self._send_json(HTTPStatus.BAD_GATEWAY, {"error": "invalid_image_analysis_no_whatsapp_sent"})
+                return
+            normalized: dict[str, object] = {"is_chart": is_chart}
             for field in _ANALYSIS_FIELDS:
                 value = analysis.get(field, "")
                 if not isinstance(value, str) or (field in {"symbol", "timeframe", "signal", "reason"} and not value.strip()):
                     self._send_json(HTTPStatus.BAD_GATEWAY, {"error": "invalid_image_analysis_no_whatsapp_sent"})
                     return
                 normalized[field] = value.strip()[:350]
-            normalized["signal"] = normalized["signal"].upper()
+            normalized["signal"] = str(normalized["signal"]).upper()
             if normalized["signal"] not in ALLOWED_SIGNALS:
                 self._send_json(HTTPStatus.BAD_GATEWAY, {"error": "invalid_image_analysis_no_whatsapp_sent"})
                 return
             analysis = normalized
+
+            if analysis["is_chart"] is False:
+                self._send_json(HTTPStatus.OK, {
+                    "status": "image_not_recognized",
+                    "analysis_id": analysis_id,
+                    **analysis,
+                    "whatsapp_status": "not_sent_no_chart_detected",
+                    "orders_submitted": 0,
+                })
+                return
 
             # Message event ID is tied to the client submission ID. A retry after a
             # successful send is deduplicated using Meta's accepted-message journal.

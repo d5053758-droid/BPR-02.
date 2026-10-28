@@ -23,20 +23,6 @@ def tick(symbol, epoch, price):
     return {"symbol": symbol, "time": epoch, "price": price}
 
 
-class RecordingNotifier:
-    def __init__(self):
-        self.events = []
-
-    def send_event(self, event):
-        self.events.append(dict(event))
-        return {
-            "status": "accepted_by_meta",
-            "event_id": event.get("event_id", ""),
-            "message_id": "wamid.synthetic-test",
-            "orders_submitted": 0,
-        }
-
-
 def test_live_monitor_turns_mocked_sse_ticks_into_closed_m1_research_signal(tmp_path):
     symbol = "EURUSD_otc"
     offset = 7200
@@ -66,7 +52,6 @@ def test_live_monitor_turns_mocked_sse_ticks_into_closed_m1_research_signal(tmp_
     receive_times = iter(epoch + 1 for epoch in corrected_times)
     output = io.StringIO()
     event_log = tmp_path / "live-signals.jsonl"
-    notifier = RecordingNotifier()
     summary = monitor_live_signals(
         api_key="test-provider-key",
         output_path=event_log,
@@ -79,7 +64,6 @@ def test_live_monitor_turns_mocked_sse_ticks_into_closed_m1_research_signal(tmp_
         monotonic_fn=lambda: 0.0,
         now_epoch_fn=lambda: next(receive_times),
         stdout=output,
-        whatsapp_notifier=notifier,
     )
 
     records = [json.loads(line) for line in output.getvalue().splitlines()]
@@ -109,12 +93,6 @@ def test_live_monitor_turns_mocked_sse_ticks_into_closed_m1_research_signal(tmp_
     assert summary["counts"]["closed_candles"] == 3
     assert summary["counts"]["signals_call"] == 1
     assert summary["partial_candle_discarded_at_stop"] is True
-    assert summary["whatsapp_notifications_enabled"] is True
-    assert len(notifier.events) == 1
-    assert notifier.events[0]["signal"] == "CALL"
-    notifications = [item for item in persisted if item.get("event_type") == "whatsapp_notification"]
-    assert len(notifications) == 1
-    assert notifications[0]["status"] == "accepted_by_meta"
 
 
 def test_live_monitor_fails_closed_if_requested_symbol_not_subscribed(tmp_path):

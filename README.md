@@ -236,7 +236,7 @@ For the first controlled run, use a 5-minute capture. Enter the key through hidd
 
 ```bash
 read -r -s -p "OTCharts API key: " OTCHARTS_API_KEY
-printf '\\n'
+printf '\n'
 export OTCHARTS_API_KEY
 bpr02-live-signals \
   --symbol EURUSD_otc \

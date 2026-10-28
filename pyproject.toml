@@ -25,7 +25,6 @@ bpr02-resample-candles = "bpr02.resample:main"
 bpr02-readiness = "bpr02.readiness:main"
 bpr02-api = "bpr02.api:main"
 bpr02-live-signals = "bpr02.live_signals:main"
-bpr02-image-alert-api = "bpr02.image_alert_api:main"
 
 [tool.setuptools.packages.find]
 include = ["bpr02*"]
